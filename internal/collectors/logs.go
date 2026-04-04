@@ -2,8 +2,6 @@ package collectors
 
 import (
 	"bufio"
-	"encoding/json"
-	"fmt"
 	"os"
 	"path/filepath"
 	"sort"
@@ -205,56 +203,6 @@ func guessPriority(msg string) int {
 	}
 }
 
-func getString(m map[string]interface{}, key string) string {
-	if v, ok := m[key]; ok {
-		switch s := v.(type) {
-		case string:
-			return s
-		case float64:
-			return strconv.FormatFloat(s, 'f', -1, 64)
-		default:
-			return fmt.Sprintf("%v", s)
-		}
-	}
-	return ""
-}
-
-// ParseJournalJSON parses JSON output from journalctl (for future use when journalctl is available)
-func ParseJournalJSON(data []byte) []LogEntry {
-	var entries []LogEntry
-	for _, line := range splitLines(data) {
-		if len(line) == 0 {
-			continue
-		}
-
-		var raw map[string]interface{}
-		if err := json.Unmarshal(line, &raw); err != nil {
-			continue
-		}
-
-		pri := 6
-		if p, ok := raw["PRIORITY"]; ok {
-			switch v := p.(type) {
-			case string:
-				pri, _ = strconv.Atoi(v)
-			case float64:
-				pri = int(v)
-			}
-		}
-
-		entries = append(entries, LogEntry{
-			Timestamp:     getString(raw, "__REALTIME_TIMESTAMP"),
-			Unit:          getString(raw, "_SYSTEMD_UNIT"),
-			Message:       getString(raw, "MESSAGE"),
-			Priority:      pri,
-			PriorityLabel: priorityLabel(pri),
-			Hostname:      getString(raw, "_HOSTNAME"),
-			PID:           getString(raw, "_PID"),
-		})
-	}
-	return entries
-}
-
 func priorityLabel(p int) string {
 	switch p {
 	case 0:
@@ -278,19 +226,3 @@ func priorityLabel(p int) string {
 	}
 }
 
-func splitLines(data []byte) [][]byte {
-	var lines [][]byte
-	start := 0
-	for i, b := range data {
-		if b == '\n' {
-			if i > start {
-				lines = append(lines, data[start:i])
-			}
-			start = i + 1
-		}
-	}
-	if start < len(data) {
-		lines = append(lines, data[start:])
-	}
-	return lines
-}

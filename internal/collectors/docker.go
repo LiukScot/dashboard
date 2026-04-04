@@ -103,8 +103,13 @@ func (d *DockerCollector) ListContainers() ([]Container, error) {
 			}
 		}
 
+		id := c.Id
+		if len(id) > 12 {
+			id = id[:12]
+		}
+
 		containers[i] = Container{
-			ID:      c.Id[:12],
+			ID:      id,
 			Name:    name,
 			Image:   c.Image,
 			State:   c.State,

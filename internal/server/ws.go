@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
@@ -11,14 +12,22 @@ import (
 
 	"github.com/LiukScot/dashboard/internal/auth"
 	"github.com/LiukScot/dashboard/internal/collectors"
+	"github.com/LiukScot/dashboard/internal/config"
 )
 
-var upgrader = websocket.Upgrader{
-	ReadBufferSize:  1024,
-	WriteBufferSize: 1024,
-	CheckOrigin: func(r *http.Request) bool {
-		return true
-	},
+func newUpgrader(allowedOrigins string) websocket.Upgrader {
+	allowed := make(map[string]bool)
+	for _, o := range strings.Split(allowedOrigins, ",") {
+		allowed[strings.TrimSpace(o)] = true
+	}
+	return websocket.Upgrader{
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		CheckOrigin: func(r *http.Request) bool {
+			origin := r.Header.Get("Origin")
+			return allowed[origin]
+		},
+	}
 }
 
 type Hub struct {
@@ -47,12 +56,16 @@ func (h *Hub) Unregister(conn *websocket.Conn) {
 
 func (h *Hub) Broadcast(data []byte) {
 	h.mu.RLock()
-	defer h.mu.RUnlock()
-
+	var failed []*websocket.Conn
 	for conn := range h.clients {
 		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			go h.Unregister(conn)
+			failed = append(failed, conn)
 		}
+	}
+	h.mu.RUnlock()
+
+	for _, conn := range failed {
+		h.Unregister(conn)
 	}
 }
 
@@ -63,18 +76,20 @@ func (h *Hub) ClientCount() int {
 }
 
 type WSHandler struct {
-	hub       *Hub
-	authSvc   *auth.Service
-	sysColl   *collectors.SystemCollector
+	hub        *Hub
+	authSvc    *auth.Service
+	sysColl    *collectors.SystemCollector
 	dockerColl *collectors.DockerCollector
+	upgrader   websocket.Upgrader
 }
 
-func NewWSHandler(hub *Hub, authSvc *auth.Service, sysColl *collectors.SystemCollector, dockerColl *collectors.DockerCollector) *WSHandler {
+func NewWSHandler(hub *Hub, authSvc *auth.Service, sysColl *collectors.SystemCollector, dockerColl *collectors.DockerCollector, cfg *config.Config) *WSHandler {
 	return &WSHandler{
 		hub:        hub,
 		authSvc:    authSvc,
 		sysColl:    sysColl,
 		dockerColl: dockerColl,
+		upgrader:   newUpgrader(cfg.AllowedOrigins),
 	}
 }
 
@@ -85,7 +100,7 @@ func (ws *WSHandler) HandleUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	conn, err := upgrader.Upgrade(w, r, nil)
+	conn, err := ws.upgrader.Upgrade(w, r, nil)
 	if err != nil {
 		log.Printf("ws upgrade error: %v", err)
 		return
