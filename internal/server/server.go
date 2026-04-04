@@ -35,7 +35,7 @@ func New(cfg *config.Config, authSvc *auth.Service,
 	logColl *collectors.LogCollector,
 ) *Server {
 	hub := NewHub()
-	wsHandler := NewWSHandler(hub, authSvc, sysColl, dockerColl)
+	wsHandler := NewWSHandler(hub, authSvc, sysColl, dockerColl, cfg)
 
 	s := &Server{
 		cfg:        cfg,
@@ -117,7 +117,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 	})
 }
 
-// Auth wrapper
+// Auth wrapper — validates session and injects user into request context
 func (s *Server) withAuth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		cookie, err := r.Cookie("DASHBOARD_SESSID")
@@ -126,13 +126,14 @@ func (s *Server) withAuth(handler http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		_, err = s.authSvc.ValidateSession(cookie.Value)
+		user, err := s.authSvc.ValidateSession(cookie.Value)
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
 		}
 
-		handler(w, r)
+		ctx := auth.WithUser(r.Context(), user)
+		handler(w, r.WithContext(ctx))
 	}
 }
 
@@ -185,8 +186,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
-	cookie, _ := r.Cookie("DASHBOARD_SESSID")
-	user, _ := s.authSvc.ValidateSession(cookie.Value)
+	user := auth.UserFromContext(r.Context())
 	writeJSON(w, http.StatusOK, user)
 }
 
@@ -195,7 +195,8 @@ func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSystemOverview(w http.ResponseWriter, r *http.Request) {
 	metrics, err := s.sysColl.Collect()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		log.Printf("system overview error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to collect system metrics"})
 		return
 	}
 	writeJSON(w, http.StatusOK, metrics)
@@ -208,7 +209,8 @@ func (s *Server) handleCPUHistory(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleNetwork(w http.ResponseWriter, r *http.Request) {
 	metrics, err := s.sysColl.CollectNetwork()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		log.Printf("network metrics error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to collect network metrics"})
 		return
 	}
 	writeJSON(w, http.StatusOK, metrics)
@@ -219,7 +221,8 @@ func (s *Server) handleNetwork(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleDockerContainers(w http.ResponseWriter, r *http.Request) {
 	containers, err := s.dockerColl.ListContainers()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		log.Printf("docker containers error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to list containers"})
 		return
 	}
 	writeJSON(w, http.StatusOK, containers)
@@ -230,7 +233,8 @@ func (s *Server) handleDockerContainers(w http.ResponseWriter, r *http.Request) 
 func (s *Server) handleFail2Ban(w http.ResponseWriter, r *http.Request) {
 	status, err := s.f2bColl.GetStatus()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		log.Printf("fail2ban status error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get fail2ban status"})
 		return
 	}
 	writeJSON(w, http.StatusOK, status)
@@ -243,10 +247,14 @@ func (s *Server) handleFail2BanBans(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
+	if limit > 1000 {
+		limit = 1000
+	}
 
 	events, err := s.f2bColl.GetRecentBans(limit)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		log.Printf("fail2ban bans error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get recent bans"})
 		return
 	}
 	writeJSON(w, http.StatusOK, events)
@@ -266,10 +274,14 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			limit = n
 		}
 	}
+	if limit > 1000 {
+		limit = 1000
+	}
 
 	entries, err := s.logColl.GetLogs(unit, priority, limit)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": err.Error()})
+		log.Printf("logs error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to get logs"})
 		return
 	}
 	writeJSON(w, http.StatusOK, entries)
@@ -280,8 +292,17 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	publicDir := s.cfg.PublicDir
 
+	// Sanitize path to prevent directory traversal
+	cleaned := filepath.Clean("/" + r.URL.Path)
+	filePath := filepath.Join(publicDir, cleaned)
+	absPublic, _ := filepath.Abs(publicDir)
+	absFile, _ := filepath.Abs(filePath)
+	if !strings.HasPrefix(absFile, absPublic+string(os.PathSeparator)) && absFile != absPublic {
+		http.NotFound(w, r)
+		return
+	}
+
 	// Try to serve the requested file
-	filePath := filepath.Join(publicDir, r.URL.Path)
 	if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
 		http.ServeFile(w, r, filePath)
 		return

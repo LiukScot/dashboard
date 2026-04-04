@@ -9,27 +9,12 @@ type contextKey string
 
 const userContextKey contextKey = "user"
 
-func Middleware(authSvc *Service) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			cookie, err := r.Cookie("DASHBOARD_SESSID")
-			if err != nil {
-				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-				return
-			}
-
-			user, err := authSvc.ValidateSession(cookie.Value)
-			if err != nil {
-				http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
-				return
-			}
-
-			ctx := context.WithValue(r.Context(), userContextKey, user)
-			next.ServeHTTP(w, r.WithContext(ctx))
-		})
-	}
+// WithUser stores a User in the request context.
+func WithUser(ctx context.Context, user *User) context.Context {
+	return context.WithValue(ctx, userContextKey, user)
 }
 
+// UserFromContext retrieves the User from a request context.
 func UserFromContext(ctx context.Context) *User {
 	user, _ := ctx.Value(userContextKey).(*User)
 	return user

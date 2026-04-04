@@ -1,5 +1,5 @@
-# Go
-dashboard
+# Go binary
+/dashboard
 *.exe
 *.dll
 *.so

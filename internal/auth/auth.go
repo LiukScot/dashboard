@@ -6,6 +6,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"golang.org/x/crypto/bcrypt"
@@ -91,7 +92,9 @@ func (s *Service) ValidateSession(sid string) (*User, error) {
 		return nil, fmt.Errorf("parse expiry: %w", err)
 	}
 	if time.Now().UTC().After(expires) {
-		s.db.Exec("DELETE FROM sessions WHERE id = ?", sid)
+		if _, err := s.db.Exec("DELETE FROM sessions WHERE id = ?", sid); err != nil {
+			log.Printf("failed to delete expired session %s: %v", sid, err)
+		}
 		return nil, ErrSessionExpired
 	}
 
