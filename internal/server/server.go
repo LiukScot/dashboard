@@ -140,6 +140,7 @@ func (s *Server) withAuth(handler http.HandlerFunc) http.HandlerFunc {
 // --- Auth handlers ---
 
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4096)
 	var body struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
@@ -179,6 +180,8 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
+		Secure:   s.cfg.CookieSecure,
+		SameSite: http.SameSiteLaxMode,
 		MaxAge:   -1,
 	})
 

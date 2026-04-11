@@ -30,42 +30,54 @@ func newUpgrader(allowedOrigins string) websocket.Upgrader {
 	}
 }
 
+// connWithMu wraps a websocket.Conn with a write mutex to prevent
+// concurrent WriteMessage calls (gorilla/websocket requires this).
+type connWithMu struct {
+	conn *websocket.Conn
+	mu   sync.Mutex
+}
+
 type Hub struct {
 	mu      sync.RWMutex
-	clients map[*websocket.Conn]bool
+	clients map[*connWithMu]bool
 }
 
 func NewHub() *Hub {
 	return &Hub{
-		clients: make(map[*websocket.Conn]bool),
+		clients: make(map[*connWithMu]bool),
 	}
 }
 
-func (h *Hub) Register(conn *websocket.Conn) {
+func (h *Hub) Register(conn *websocket.Conn) *connWithMu {
+	c := &connWithMu{conn: conn}
 	h.mu.Lock()
-	h.clients[conn] = true
+	h.clients[c] = true
 	h.mu.Unlock()
+	return c
 }
 
-func (h *Hub) Unregister(conn *websocket.Conn) {
+func (h *Hub) Unregister(c *connWithMu) {
 	h.mu.Lock()
-	delete(h.clients, conn)
+	delete(h.clients, c)
 	h.mu.Unlock()
-	conn.Close()
+	c.conn.Close()
 }
 
 func (h *Hub) Broadcast(data []byte) {
 	h.mu.RLock()
-	var failed []*websocket.Conn
-	for conn := range h.clients {
-		if err := conn.WriteMessage(websocket.TextMessage, data); err != nil {
-			failed = append(failed, conn)
+	var failed []*connWithMu
+	for c := range h.clients {
+		c.mu.Lock()
+		err := c.conn.WriteMessage(websocket.TextMessage, data)
+		c.mu.Unlock()
+		if err != nil {
+			failed = append(failed, c)
 		}
 	}
 	h.mu.RUnlock()
 
-	for _, conn := range failed {
-		h.Unregister(conn)
+	for _, c := range failed {
+		h.Unregister(c)
 	}
 }
 
@@ -106,11 +118,11 @@ func (ws *WSHandler) HandleUpgrade(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	ws.hub.Register(conn)
+	c := ws.hub.Register(conn)
 	log.Printf("ws client connected (%d total)", ws.hub.ClientCount())
 
 	go func() {
-		defer ws.hub.Unregister(conn)
+		defer ws.hub.Unregister(c)
 		for {
 			if _, _, err := conn.ReadMessage(); err != nil {
 				break
