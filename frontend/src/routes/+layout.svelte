@@ -12,6 +12,7 @@
 	let { children }: Props = $props();
 	let user = $state<{ id: number; email: string } | null>(null);
 	let loading = $state(true);
+	let loginError = $state('');
 
 	onMount(async () => {
 		try {
@@ -42,18 +43,20 @@
 	<div class="h-screen flex items-center justify-center">
 		<form
 			class="bg-bg-card border border-border rounded-xl p-8 w-full max-w-sm"
-			onsubmit={async (e) => {
-				e.preventDefault();
-				const form = e.currentTarget;
-				const data = new FormData(form);
-				try {
-					await api.login(data.get('email') as string, data.get('password') as string);
-					user = await api.me();
-				} catch (err) {
-					// show error
-				}
-			}}
-		>
+				onsubmit={async (e) => {
+					e.preventDefault();
+					loginError = '';
+					const form = e.currentTarget;
+					const data = new FormData(form);
+					try {
+						await api.login(data.get('email') as string, data.get('password') as string);
+						user = await api.me();
+						loginError = '';
+					} catch (err) {
+						loginError = err instanceof Error ? err.message : 'Sign in failed';
+					}
+				}}
+			>
 			<h1 class="text-xl font-semibold mb-6 text-center">Dashboard</h1>
 			<input
 				name="email"
@@ -62,16 +65,19 @@
 				required
 				class="w-full bg-bg border border-border rounded-lg px-4 py-2.5 mb-3 text-sm focus:outline-none focus:border-accent transition-colors"
 			/>
-			<input
-				name="password"
-				type="password"
+				<input
+					name="password"
+					type="password"
 				placeholder="Password"
 				required
-				class="w-full bg-bg border border-border rounded-lg px-4 py-2.5 mb-4 text-sm focus:outline-none focus:border-accent transition-colors"
-			/>
-			<button
-				type="submit"
-				class="w-full bg-accent text-bg font-medium rounded-lg py-2.5 text-sm hover:opacity-90 transition-opacity cursor-pointer"
+					class="w-full bg-bg border border-border rounded-lg px-4 py-2.5 mb-4 text-sm focus:outline-none focus:border-accent transition-colors"
+				/>
+				{#if loginError}
+					<p class="mb-4 text-sm text-danger">{loginError}</p>
+				{/if}
+				<button
+					type="submit"
+					class="w-full bg-accent text-bg font-medium rounded-lg py-2.5 text-sm hover:opacity-90 transition-opacity cursor-pointer"
 			>
 				Sign in
 			</button>
