@@ -143,7 +143,7 @@ func (c *SystemCollector) CollectNetwork() ([]NetworkMetrics, error) {
 		c.mu.Lock()
 		if prev, ok := c.netHistory[iface]; ok {
 			dt := now.Sub(prev.timestamp).Seconds()
-			if dt > 0 {
+			if dt > 0 && rxBytes >= prev.rxBytes && txBytes >= prev.txBytes {
 				nm.RxRate = float64(rxBytes-prev.rxBytes) / dt
 				nm.TxRate = float64(txBytes-prev.txBytes) / dt
 			}
@@ -203,6 +203,7 @@ func (c *SystemCollector) readCPU(m *SystemMetrics) error {
 				}
 			}
 
+			c.mu.Lock()
 			if c.prevCPUTotal > 0 {
 				dTotal := total - c.prevCPUTotal
 				dIdle := idle - c.prevCPUIdle
@@ -212,6 +213,7 @@ func (c *SystemCollector) readCPU(m *SystemMetrics) error {
 			}
 			c.prevCPUIdle = idle
 			c.prevCPUTotal = total
+			c.mu.Unlock()
 		}
 		if strings.HasPrefix(line, "cpu") && !strings.HasPrefix(line, "cpu ") {
 			cores++

@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -42,6 +43,8 @@ type ContainerStats struct {
 type DockerCollector struct {
 	client *http.Client
 }
+
+const maxConcurrentStatsRequests = 4
 
 func NewDockerCollector(socketPath string) *DockerCollector {
 	return &DockerCollector{
@@ -205,17 +208,47 @@ func (d *DockerCollector) GetAllStats() ([]ContainerStats, error) {
 		return nil, err
 	}
 
-	var stats []ContainerStats
+	running := make([]Container, 0, len(containers))
 	for _, c := range containers {
 		if c.State != "running" {
 			continue
 		}
-		s, err := d.GetContainerStats(c.ID)
-		if err != nil {
-			continue
-		}
-		stats = append(stats, *s)
+		running = append(running, c)
 	}
 
-	return stats, nil
+	stats := make([]ContainerStats, len(running))
+	filled := make([]bool, len(running))
+	sem := make(chan struct{}, maxConcurrentStatsRequests)
+
+	var mu sync.Mutex
+	var wg sync.WaitGroup
+	for i, c := range running {
+		wg.Add(1)
+		go func(i int, c Container) {
+			defer wg.Done()
+
+			sem <- struct{}{}
+			defer func() { <-sem }()
+
+			s, err := d.GetContainerStats(c.ID)
+			if err != nil {
+				return
+			}
+
+			mu.Lock()
+			stats[i] = *s
+			filled[i] = true
+			mu.Unlock()
+		}(i, c)
+	}
+	wg.Wait()
+
+	result := make([]ContainerStats, 0, len(running))
+	for i, ok := range filled {
+		if ok {
+			result = append(result, stats[i])
+		}
+	}
+
+	return result, nil
 }

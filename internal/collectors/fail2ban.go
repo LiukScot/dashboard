@@ -127,7 +127,10 @@ func (f *Fail2BanCollector) GetRecentBans(limit int) ([]BanEvent, error) {
 			continue
 		}
 
-		ts, err := time.Parse("2006-01-02 15:04:05,000", matches[1])
+		// fail2ban uses comma for milliseconds (e.g. "2024-01-15 10:30:45,123")
+		// Go's time.Parse uses dot for fractional seconds, so replace comma
+		tsStr := strings.Replace(matches[1], ",", ".", 1)
+		ts, err := time.Parse("2006-01-02 15:04:05.000", tsStr)
 		if err != nil {
 			continue
 		}
