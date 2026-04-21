@@ -56,6 +56,7 @@ func (s *Server) routes() {
 	// Auth routes (no middleware)
 	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
 	s.mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
+	s.mux.HandleFunc("GET /api/v1/auth/session", s.handleSession)
 	s.mux.HandleFunc("GET /api/v1/auth/me", s.withAuth(s.handleMe))
 
 	// System routes
@@ -186,6 +187,26 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	})
 
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
+	response := map[string]any{"authenticated": false}
+
+	cookie, err := r.Cookie("DASHBOARD_SESSID")
+	if err != nil {
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+
+	user, err := s.authSvc.ValidateSession(cookie.Value)
+	if err != nil {
+		writeJSON(w, http.StatusOK, response)
+		return
+	}
+
+	response["authenticated"] = true
+	response["user"] = user
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {

@@ -10,24 +10,28 @@
 	let network = $state<NetworkMetrics[]>([]);
 	let containers = $state<Container[]>([]);
 	let dockerStats = $state<ContainerStats[]>([]);
+	let dockerError = $state('');
 	let cpuHistory = $state<{ time: string; value: number }[]>([]);
 	let netHistory = $state<{ time: string; rx: number; tx: number }[]>([]);
 
 	let unsubscribeWs: (() => void) | null = null;
 
 	onMount(async () => {
-		// Initial fetch
-		const [sys, cont, hist] = await Promise.all([
-			api.systemOverview(),
-			api.dockerContainers(),
-			api.cpuHistory()
-		]);
+		const [sys, hist] = await Promise.all([api.systemOverview(), api.cpuHistory()]);
 		system = sys;
-		containers = cont;
 		cpuHistory = hist.map((h) => ({
 			time: new Date(h.timestamp).toLocaleTimeString(),
 			value: h.cpuPercent
 		}));
+
+		try {
+			containers = await api.dockerContainers();
+			dockerError = '';
+		} catch (err) {
+			containers = [];
+
+			dockerError = err instanceof Error ? err.message : 'Failed to load containers';
+		}
 
 		// WebSocket for live updates
 		unsubscribeWs = subscribe((msg: MetricsMessage) => {
@@ -153,6 +157,9 @@
 			</span>
 			<span class="text-text-dim ml-1">/ {containers.length} total</span>
 		</h3>
+		{#if dockerError}
+			<p class="mb-3 text-sm text-danger">{dockerError}</p>
+		{/if}
 		<ContainerTable {containers} stats={dockerStats} />
 	</div>
 </div>

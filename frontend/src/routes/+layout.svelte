@@ -15,11 +15,8 @@
 	let loginError = $state('');
 
 	onMount(async () => {
-		try {
-			user = await api.me();
-		} catch {
-			user = null;
-		}
+		const session = await api.session();
+		user = session.authenticated ? (session.user ?? null) : null;
 		loading = false;
 	});
 
@@ -50,7 +47,8 @@
 					const data = new FormData(form);
 					try {
 						await api.login(data.get('email') as string, data.get('password') as string);
-						user = await api.me();
+						const session = await api.session();
+						user = session.authenticated ? (session.user ?? null) : null;
 						loginError = '';
 					} catch (err) {
 						loginError = err instanceof Error ? err.message : 'Sign in failed';

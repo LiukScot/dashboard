@@ -4,7 +4,6 @@ services:
     image: dashboard:local
     container_name: dashboard
     network_mode: host
-    user: "1000:1000"
     environment:
       HOST: 0.0.0.0
       PORT: 4200

@@ -22,6 +22,7 @@ export const api = {
 			body: JSON.stringify({ email, password })
 		}),
 	logout: () => request('/api/v1/auth/logout', { method: 'POST' }),
+	session: () => request<SessionResponse>('/api/v1/auth/session'),
 	me: () => request<{ id: number; email: string }>('/api/v1/auth/me'),
 
 	systemOverview: () => request<SystemMetrics>('/api/v1/system/overview'),
@@ -116,4 +117,9 @@ export interface LogEntry {
 	priorityLabel: string;
 	hostname: string;
 	pid: string;
+}
+
+export interface SessionResponse {
+	authenticated: boolean;
+	user?: { id: number; email: string };
 }

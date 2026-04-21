@@ -20,14 +20,15 @@ RUN CGO_ENABLED=1 go build -o /user-cli ./scripts/user-cli.go
 
 # Stage 3: Runtime
 FROM alpine:3.21
-RUN apk add --no-cache ca-certificates fail2ban
+RUN apk add --no-cache ca-certificates fail2ban su-exec
 WORKDIR /app
 
 COPY --from=backend-build /dashboard /app/dashboard
 COPY --from=backend-build /user-cli /app/user-cli
 COPY --from=frontend-build /app/frontend/build /app/frontend/build
+COPY scripts/entrypoint.sh /app/entrypoint.sh
 
-RUN mkdir -p /app/data
+RUN chmod +x /app/entrypoint.sh && mkdir -p /app/data
 
 ENV HOST=0.0.0.0 \
     PORT=4200 \
@@ -38,4 +39,4 @@ ENV HOST=0.0.0.0 \
     PUBLIC_DIR=/app/frontend/build
 
 EXPOSE 4200
-CMD ["/app/dashboard"]
+ENTRYPOINT ["/app/entrypoint.sh"]

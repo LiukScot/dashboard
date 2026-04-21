@@ -1,6 +1,7 @@
 package server
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -44,6 +45,46 @@ func TestHandleLoginRejectsOversizedBody(t *testing.T) {
 
 	if res.Code != http.StatusBadRequest {
 		t.Fatalf("expected status 400 for oversized body, got %d", res.Code)
+	}
+}
+
+func TestHandleSessionReturnsAuthenticatedFalseWithoutCookie(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "dashboard.sqlite")
+	database, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+
+	if err := db.RunMigrations(database); err != nil {
+		t.Fatalf("migrations: %v", err)
+	}
+
+	srv := &Server{
+		cfg:     &config.Config{SessionTTL: 3600},
+		authSvc: auth.NewService(database, 3600),
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/auth/session", nil)
+	res := httptest.NewRecorder()
+
+	srv.handleSession(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected status 200, got %d", res.Code)
+	}
+
+	var body struct {
+		Authenticated bool `json:"authenticated"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+
+	if body.Authenticated {
+		t.Fatal("expected unauthenticated response without cookie")
 	}
 }
 
