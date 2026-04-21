@@ -12,7 +12,6 @@ data/
 frontend/node_modules/
 frontend/.svelte-kit/
 frontend/build/
-frontend/bun.lock
 
 # Environment
 .env

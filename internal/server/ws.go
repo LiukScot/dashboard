@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"log"
 	"net/http"
-	"strings"
 	"sync"
 	"time"
 
@@ -16,16 +15,12 @@ import (
 )
 
 func newUpgrader(allowedOrigins string) websocket.Upgrader {
-	allowed := make(map[string]bool)
-	for _, o := range strings.Split(allowedOrigins, ",") {
-		allowed[strings.TrimSpace(o)] = true
-	}
+	allowed := parseAllowedOrigins(allowedOrigins)
 	return websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 		CheckOrigin: func(r *http.Request) bool {
-			origin := r.Header.Get("Origin")
-			return allowed[origin]
+			return requestOriginAllowed(r, allowed)
 		},
 	}
 }
@@ -132,8 +127,8 @@ func (ws *WSHandler) HandleUpgrade(w http.ResponseWriter, r *http.Request) {
 }
 
 type MetricsBroadcast struct {
-	Type    string                     `json:"type"`
-	System  *collectors.SystemMetrics  `json:"system,omitempty"`
+	Type    string                      `json:"type"`
+	System  *collectors.SystemMetrics   `json:"system,omitempty"`
 	Network []collectors.NetworkMetrics `json:"network,omitempty"`
 	Docker  []collectors.ContainerStats `json:"docker,omitempty"`
 }
