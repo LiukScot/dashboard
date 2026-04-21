@@ -95,14 +95,11 @@ func (s *Server) Start() error {
 
 // CORS middleware
 func (s *Server) corsMiddleware(next http.Handler) http.Handler {
-	allowed := make(map[string]bool)
-	for _, o := range strings.Split(s.cfg.AllowedOrigins, ",") {
-		allowed[strings.TrimSpace(o)] = true
-	}
+	allowed := parseAllowedOrigins(s.cfg.AllowedOrigins)
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if allowed[origin] {
+		if requestOriginAllowed(r, allowed) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")

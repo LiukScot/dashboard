@@ -162,3 +162,42 @@ func TestHubBroadcastConcurrentDoesNotPanic(t *testing.T) {
 	_ = clientConn.Close()
 	<-done
 }
+
+func TestRequestOriginAllowedAllowsConfiguredOrigin(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:4200/ws", nil)
+	req.Host = "127.0.0.1:4200"
+	req.Header.Set("Origin", "http://localhost:5173")
+
+	allowed := parseAllowedOrigins("http://localhost:4200,http://localhost:5173")
+	if !requestOriginAllowed(req, allowed) {
+		t.Fatal("expected configured origin to be allowed")
+	}
+}
+
+func TestRequestOriginAllowedAllowsSameHostOrigin(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "http://100.75.217.127:4200/ws", nil)
+	req.Host = "100.75.217.127:4200"
+	req.Header.Set("Origin", "http://100.75.217.127:4200")
+
+	allowed := parseAllowedOrigins("http://localhost:4200,http://127.0.0.1:4200")
+	if !requestOriginAllowed(req, allowed) {
+		t.Fatal("expected same-host origin to be allowed")
+	}
+}
+
+func TestRequestOriginAllowedRejectsOtherOrigin(t *testing.T) {
+	t.Parallel()
+
+	req := httptest.NewRequest(http.MethodGet, "http://127.0.0.1:4200/ws", nil)
+	req.Host = "127.0.0.1:4200"
+	req.Header.Set("Origin", "http://evil.example")
+
+	allowed := parseAllowedOrigins("http://localhost:4200,http://localhost:5173")
+	if requestOriginAllowed(req, allowed) {
+		t.Fatal("expected unrelated origin to be rejected")
+	}
+}
