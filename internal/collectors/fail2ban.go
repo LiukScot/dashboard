@@ -2,6 +2,7 @@ package collectors
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -43,6 +44,9 @@ func NewFail2BanCollector(logPath string) *Fail2BanCollector {
 func (f *Fail2BanCollector) GetStatus() (*Fail2BanStatus, error) {
 	out, err := exec.Command("fail2ban-client", "status").Output()
 	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return nil, nil
+		}
 		return nil, fmt.Errorf("fail2ban-client status: %w", err)
 	}
 
@@ -114,6 +118,9 @@ func (f *Fail2BanCollector) GetRecentBans(limit int) ([]BanEvent, error) {
 	logFile := filepath.Join(f.logPath, "fail2ban.log")
 	file, err := os.Open(logFile)
 	if err != nil {
+		if os.IsNotExist(err) {
+			return []BanEvent{}, nil
+		}
 		return nil, fmt.Errorf("open fail2ban log: %w", err)
 	}
 	defer file.Close()

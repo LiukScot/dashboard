@@ -24,6 +24,7 @@ type Server struct {
 	dockerColl *collectors.DockerCollector
 	f2bColl    *collectors.Fail2BanCollector
 	logColl    *collectors.LogCollector
+	cronColl   *collectors.CronCollector
 	wsHandler  *WSHandler
 	mux        *http.ServeMux
 }
@@ -33,6 +34,7 @@ func New(cfg *config.Config, authSvc *auth.Service,
 	dockerColl *collectors.DockerCollector,
 	f2bColl *collectors.Fail2BanCollector,
 	logColl *collectors.LogCollector,
+	cronColl *collectors.CronCollector,
 ) *Server {
 	hub := NewHub()
 	wsHandler := NewWSHandler(hub, authSvc, sysColl, dockerColl, cfg)
@@ -44,6 +46,7 @@ func New(cfg *config.Config, authSvc *auth.Service,
 		dockerColl: dockerColl,
 		f2bColl:    f2bColl,
 		logColl:    logColl,
+		cronColl:   cronColl,
 		wsHandler:  wsHandler,
 		mux:        http.NewServeMux(),
 	}
@@ -71,6 +74,12 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("GET /api/v1/security/fail2ban", s.withAuth(s.handleFail2Ban))
 	s.mux.HandleFunc("GET /api/v1/security/fail2ban/bans", s.withAuth(s.handleFail2BanBans))
 	s.mux.HandleFunc("GET /api/v1/security/logs", s.withAuth(s.handleLogs))
+
+	// Cron routes
+	s.mux.HandleFunc("GET /api/v1/cron/week", s.withAuth(s.handleCronWeek))
+	s.mux.HandleFunc("POST /api/v1/cron/jobs/{fingerprint}/hide", s.withAuth(s.handleHideCronJob))
+	s.mux.HandleFunc("DELETE /api/v1/cron/hidden", s.withAuth(s.handleResetHiddenCronJobs))
+	s.mux.HandleFunc("GET /api/v1/cron/hidden/count", s.withAuth(s.handleHiddenCronJobCount))
 
 	// WebSocket
 	s.mux.HandleFunc("GET /ws", s.wsHandler.HandleUpgrade)
@@ -308,9 +317,86 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, entries)
 }
 
+// --- Cron handlers ---
+
+func (s *Server) handleCronWeek(w http.ResponseWriter, r *http.Request) {
+	if s.cronColl == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "cron collector unavailable"})
+		return
+	}
+
+	start := time.Now()
+	if raw := r.URL.Query().Get("start"); raw != "" {
+		parsed, err := time.ParseInLocation("2006-01-02", raw, time.Local)
+		if err != nil {
+			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid start date"})
+			return
+		}
+		start = parsed
+	}
+
+	week, err := s.cronColl.Week(start)
+	if err != nil {
+		log.Printf("cron week error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load cron week"})
+		return
+	}
+	writeJSON(w, http.StatusOK, week)
+}
+
+func (s *Server) handleHideCronJob(w http.ResponseWriter, r *http.Request) {
+	if s.cronColl == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "cron collector unavailable"})
+		return
+	}
+	fingerprint := strings.TrimSpace(r.PathValue("fingerprint"))
+	if fingerprint == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing cron job id"})
+		return
+	}
+	if err := s.cronColl.HideJob(fingerprint); err != nil {
+		log.Printf("hide cron job error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to hide cron job"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleResetHiddenCronJobs(w http.ResponseWriter, r *http.Request) {
+	if s.cronColl == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "cron collector unavailable"})
+		return
+	}
+	if err := s.cronColl.ResetHiddenJobs(); err != nil {
+		log.Printf("reset hidden cron jobs error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to reset hidden cron jobs"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
+}
+
+func (s *Server) handleHiddenCronJobCount(w http.ResponseWriter, r *http.Request) {
+	if s.cronColl == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "cron collector unavailable"})
+		return
+	}
+	count, err := s.cronColl.HiddenJobCount()
+	if err != nil {
+		log.Printf("hidden cron job count error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to count hidden cron jobs"})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int{"count": count})
+}
+
 // --- Static file serving (SPA) ---
 
 func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
+	if strings.HasPrefix(r.URL.Path, "/api/") {
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "api route not found"})
+		return
+	}
+
 	publicDir := s.cfg.PublicDir
 
 	// Sanitize path to prevent directory traversal
