@@ -1,0 +1,139 @@
+package collectors
+
+import (
+	"os"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/LiukScot/dashboard/internal/db"
+)
+
+func TestParseCronLineSystemCrontabIncludesUser(t *testing.T) {
+	t.Parallel()
+
+	job, ok, warning := parseCronLine("15 10 * * 1 root /usr/local/bin/backup", "/etc/crontab", 12)
+	if !ok {
+		t.Fatalf("expected line to parse, warning %q", warning)
+	}
+	if job.Schedule != "15 10 * * 1" {
+		t.Fatalf("unexpected schedule %q", job.Schedule)
+	}
+	if job.User != "root" {
+		t.Fatalf("unexpected user %q", job.User)
+	}
+	if job.Command != "/usr/local/bin/backup" {
+		t.Fatalf("unexpected command %q", job.Command)
+	}
+}
+
+func TestParseCronExprExpandsWeeklyOccurrences(t *testing.T) {
+	t.Parallel()
+
+	expr, err := parseCronExpr("0 9 * * 1,3")
+	if err != nil {
+		t.Fatalf("parse expr: %v", err)
+	}
+
+	start := time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC)
+	got := expr.occurrences(start, start.AddDate(0, 0, 7))
+	if len(got) != 2 {
+		t.Fatalf("expected 2 occurrences, got %d", len(got))
+	}
+	if got[0].Weekday() != time.Monday || got[1].Weekday() != time.Wednesday {
+		t.Fatalf("unexpected weekdays %s and %s", got[0].Weekday(), got[1].Weekday())
+	}
+}
+
+func TestCronCollectorReadsCronFiles(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "crontab")
+	if err := os.WriteFile(path, []byte("0 */6 * * * root /bin/echo hello\n"), 0600); err != nil {
+		t.Fatalf("write crontab: %v", err)
+	}
+
+	collector := NewCronCollector(nil, []string{path}, "")
+	jobs, warnings := collector.ReadJobs()
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if len(jobs) != 1 {
+		t.Fatalf("expected 1 job, got %d", len(jobs))
+	}
+	if jobs[0].Command != "/bin/echo hello" {
+		t.Fatalf("unexpected command %q", jobs[0].Command)
+	}
+}
+
+func TestParseCronLogLine(t *testing.T) {
+	t.Parallel()
+
+	now := time.Date(2026, 4, 29, 12, 0, 0, 0, time.UTC)
+	observedAt, user, command, ok := parseCronLogLine("Apr 29 10:15:01 host CRON[123]: (root) CMD (/usr/local/bin/backup)", now)
+	if !ok {
+		t.Fatal("expected cron log line to parse")
+	}
+	if observedAt.Format(time.RFC3339) != "2026-04-29T10:15:01Z" {
+		t.Fatalf("unexpected observed time %s", observedAt.Format(time.RFC3339))
+	}
+	if user != "root" {
+		t.Fatalf("unexpected user %q", user)
+	}
+	if command != "/usr/local/bin/backup" {
+		t.Fatalf("unexpected command %q", command)
+	}
+}
+
+func TestCronCollectorHidesJobsFromWeek(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "dashboard.sqlite")
+	database, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := db.RunMigrations(database); err != nil {
+		t.Fatalf("migrations: %v", err)
+	}
+
+	cronPath := filepath.Join(dir, "crontab")
+	if err := os.WriteFile(cronPath, []byte("0 * * * * root run-parts /etc/cron.hourly\n"), 0600); err != nil {
+		t.Fatalf("write crontab: %v", err)
+	}
+
+	collector := NewCronCollector(database, []string{cronPath}, "")
+	week, err := collector.Week(time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("load week: %v", err)
+	}
+	if len(week.Jobs) != 1 {
+		t.Fatalf("expected job before hide, got %d", len(week.Jobs))
+	}
+
+	if err := collector.HideJob(week.Jobs[0].Fingerprint); err != nil {
+		t.Fatalf("hide job: %v", err)
+	}
+
+	week, err = collector.Week(time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("reload week: %v", err)
+	}
+	if len(week.Jobs) != 0 || len(week.Occurrences) != 0 {
+		t.Fatalf("expected hidden job to be filtered, got %d jobs and %d occurrences", len(week.Jobs), len(week.Occurrences))
+	}
+
+	if err := collector.ResetHiddenJobs(); err != nil {
+		t.Fatalf("reset hidden jobs: %v", err)
+	}
+	count, err := collector.HiddenJobCount()
+	if err != nil {
+		t.Fatalf("count hidden jobs: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected hidden count 0, got %d", count)
+	}
+}

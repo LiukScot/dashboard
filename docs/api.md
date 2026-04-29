@@ -363,6 +363,93 @@ Example:
 curl -b cookies.txt 'http://localhost:4200/api/v1/security/logs?unit=auth&priority=4&limit=50'
 ```
 
+## Cron
+
+### GET `/api/v1/cron/week`
+
+- Auth required: `Yes`
+- Query parameters:
+  - `start`: optional date in `YYYY-MM-DD` format. The server returns the 7-day window starting at this date.
+- Hidden cron jobs are excluded from `jobs` and `occurrences`.
+
+- Success response: `200 OK`
+
+```json
+{
+  "start": "2026-04-27",
+  "end": "2026-05-03",
+  "historyCoverage": "partial",
+  "jobs": [
+    {
+      "fingerprint": "1a2b3c4d5e6f7890",
+      "source": "/etc/cron.d/0hourly",
+      "line": 2,
+      "schedule": "01 * * * *",
+      "user": "root",
+      "command": "run-parts /etc/cron.hourly"
+    }
+  ],
+  "occurrences": [
+    {
+      "id": "1a2b3c4d5e6f7890-202604271001",
+      "jobId": "1a2b3c4d5e6f7890",
+      "scheduledAt": "2026-04-27T10:01:00+02:00",
+      "status": "scheduled",
+      "source": "/etc/cron.d/0hourly",
+      "user": "root",
+      "command": "run-parts /etc/cron.hourly"
+    }
+  ],
+  "history": [],
+  "warnings": []
+}
+```
+
+Example:
+
+```bash
+curl -b cookies.txt 'http://localhost:4200/api/v1/cron/week?start=2026-04-27'
+```
+
+### POST `/api/v1/cron/jobs/{fingerprint}/hide`
+
+- Auth required: `Yes`
+- Hides a cron job from weekly calendar responses.
+
+- Success response: `200 OK`
+
+```json
+{
+  "status": "ok"
+}
+```
+
+### DELETE `/api/v1/cron/hidden`
+
+- Auth required: `Yes`
+- Resets all hidden cron jobs.
+
+- Success response: `200 OK`
+
+```json
+{
+  "status": "ok"
+}
+```
+
+### GET `/api/v1/cron/hidden/count`
+
+- Auth required: `Yes`
+- Returns how many cron jobs are currently hidden.
+
+- Success response: `200 OK`
+
+```json
+{
+  "count": 1
+}
+```
+
 ## WebSocket Protocol
 
 ### GET `/ws`

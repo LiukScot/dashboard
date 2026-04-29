@@ -28,8 +28,9 @@ func main() {
 	dockerColl := collectors.NewDockerCollector(cfg.DockerSocket)
 	f2bColl := collectors.NewFail2BanCollector(cfg.LogPath)
 	logColl := collectors.NewLogCollector(cfg.LogPath)
+	cronColl := collectors.NewCronCollector(database, cfg.CronPaths, cfg.LogPath)
 
-	srv := server.New(cfg, authSvc, sysColl, dockerColl, f2bColl, logColl)
+	srv := server.New(cfg, authSvc, sysColl, dockerColl, f2bColl, logColl, cronColl)
 
 	log.Fatal(srv.Start())
 }

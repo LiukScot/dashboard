@@ -3,19 +3,21 @@ package config
 import (
 	"os"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
-	Host         string
-	Port         int
-	DBPath       string
-	ProcPath     string
-	LogPath      string
-	DockerSocket string
+	Host           string
+	Port           int
+	DBPath         string
+	ProcPath       string
+	LogPath        string
+	DockerSocket   string
+	CronPaths      []string
 	AllowedOrigins string
-	CookieSecure bool
-	SessionTTL   int
-	PublicDir    string
+	CookieSecure   bool
+	SessionTTL     int
+	PublicDir      string
 }
 
 func Load() *Config {
@@ -26,6 +28,7 @@ func Load() *Config {
 		ProcPath:       envOr("PROC_PATH", "/proc"),
 		LogPath:        envOr("LOG_PATH", "/var/log"),
 		DockerSocket:   envOr("DOCKER_SOCKET", "/var/run/docker.sock"),
+		CronPaths:      envList("CRON_PATHS", "/etc/crontab,/etc/cron.d/*"),
 		AllowedOrigins: envOr("ALLOWED_ORIGINS", "http://localhost:4200,http://127.0.0.1:4200,http://localhost:5173,http://127.0.0.1:5173"),
 		CookieSecure:   envOr("COOKIE_SECURE", "false") == "true",
 		SessionTTL:     envInt("SESSION_TTL", 60*60*24*30),
@@ -47,4 +50,17 @@ func envInt(key string, fallback int) int {
 		}
 	}
 	return fallback
+}
+
+func envList(key string, fallback string) []string {
+	raw := envOr(key, fallback)
+	parts := strings.Split(raw, ",")
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part != "" {
+			result = append(result, part)
+		}
+	}
+	return result
 }

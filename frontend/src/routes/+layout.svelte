@@ -27,7 +27,9 @@
 
 	const navItems = [
 		{ href: '/', label: 'Overview', icon: '⊞' },
-		{ href: '/security', label: 'Security', icon: '⊘' }
+		{ href: '/security', label: 'Security', icon: '⊘' },
+		{ href: '/cron', label: 'Cron', icon: '◷' },
+		{ href: '/settings', label: 'Settings', icon: '⚙' }
 	];
 </script>
 

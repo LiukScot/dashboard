@@ -12,6 +12,11 @@ async function request<T>(path: string, opts?: RequestInit): Promise<T> {
 		throw new Error(body.error || res.statusText);
 	}
 
+	const contentType = res.headers.get('content-type') ?? '';
+	if (!contentType.includes('application/json')) {
+		throw new Error(`Expected JSON from ${path}, got ${contentType || 'unknown content type'}`);
+	}
+
 	return res.json();
 }
 
@@ -31,7 +36,7 @@ export const api = {
 
 	dockerContainers: () => request<Container[]>('/api/v1/docker/containers'),
 
-	fail2ban: () => request<Fail2BanStatus>('/api/v1/security/fail2ban'),
+	fail2ban: () => request<Fail2BanStatus | null>('/api/v1/security/fail2ban'),
 	fail2banBans: (limit = 50) => request<BanEvent[]>(`/api/v1/security/fail2ban/bans?limit=${limit}`),
 	logs: (unit = '', priority = -1, limit = 100) => {
 		const params = new URLSearchParams();
@@ -39,7 +44,14 @@ export const api = {
 		if (priority >= 0) params.set('priority', String(priority));
 		params.set('limit', String(limit));
 		return request<LogEntry[]>(`/api/v1/security/logs?${params}`);
-	}
+	},
+	cronWeek: (start: string) => request<CronWeek>(`/api/v1/cron/week?start=${start}`),
+	hideCronJob: (fingerprint: string) =>
+		request<{ status: string }>(`/api/v1/cron/jobs/${encodeURIComponent(fingerprint)}/hide`, {
+			method: 'POST'
+		}),
+	resetHiddenCronJobs: () => request<{ status: string }>('/api/v1/cron/hidden', { method: 'DELETE' }),
+	hiddenCronJobCount: () => request<{ count: number }>('/api/v1/cron/hidden/count')
 };
 
 export interface SystemMetrics {
@@ -122,4 +134,43 @@ export interface LogEntry {
 export interface SessionResponse {
 	authenticated: boolean;
 	user?: { id: number; email: string };
+}
+
+export interface CronWeek {
+	start: string;
+	end: string;
+	historyCoverage: 'none' | 'partial' | 'good';
+	hiddenJobCount: number;
+	jobs: CronJob[];
+	occurrences: CronOccurrence[];
+	history: CronHistoryItem[];
+	warnings: string[];
+}
+
+export interface CronJob {
+	fingerprint: string;
+	source: string;
+	line: number;
+	schedule: string;
+	user: string;
+	command: string;
+}
+
+export interface CronOccurrence {
+	id: string;
+	jobId: string;
+	scheduledAt: string;
+	status: 'planned' | 'scheduled' | 'observed' | 'failed';
+	source: string;
+	user: string;
+	command: string;
+}
+
+export interface CronHistoryItem {
+	jobId: string;
+	scheduledAt: string;
+	observedAt: string;
+	status: string;
+	source: string;
+	message: string;
 }
