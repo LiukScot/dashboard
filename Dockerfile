@@ -7,8 +7,10 @@ COPY frontend/ ./
 RUN bun run build
 
 # Stage 2: Build Go backend
-FROM golang:1.25-alpine AS backend-build
-RUN apk add --no-cache gcc musl-dev
+FROM golang:1.25-bookworm AS backend-build
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends gcc libc6-dev \
+	&& rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
@@ -19,8 +21,10 @@ RUN CGO_ENABLED=1 go build -o /dashboard ./cmd/dashboard/
 RUN CGO_ENABLED=1 go build -o /user-cli ./scripts/user-cli.go
 
 # Stage 3: Runtime
-FROM alpine:3.21
-RUN apk add --no-cache ca-certificates fail2ban su-exec
+FROM debian:bookworm-slim
+RUN apt-get update \
+	&& apt-get install -y --no-install-recommends ca-certificates fail2ban gosu systemd \
+	&& rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
 COPY --from=backend-build /dashboard /app/dashboard
