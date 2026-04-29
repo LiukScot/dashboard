@@ -74,6 +74,8 @@ docker compose up --build
 
 The app listens on `http://localhost:4200` by default.
 
+When running with Docker Compose, the container mounts the host cron definitions, host journals, and host logs so the Cron and security views reflect the machine running Docker rather than the container filesystem.
+
 ### 3. Create the first user
 
 In a second terminal:
@@ -145,6 +147,10 @@ All current variables from `.env.example` are listed below.
 | `PROC_PATH` | `/proc` locally, `/host/proc` in Docker | Source for uptime, CPU, memory, and network metrics. |
 | `LOG_PATH` | `/var/log` locally, `/host/log` in Docker | Source directory for security/system log parsing. |
 | `DOCKER_SOCKET` | `/var/run/docker.sock` | Docker Engine Unix socket used for container listing and stats. |
+| `CRON_PATHS` | `/etc/crontab,/etc/cron.d/*,/var/spool/cron/*,/var/spool/cron/crontabs/*,/var/spool/cron/tabs/*` locally, `/host/etc/crontab,/host/etc/cron.d/*,/app/data/cron-user-spool/*` in Docker Compose | Cron definition files used to build the calendar, including system cron files and common per-user crontab spool locations. |
+| `JOURNAL_GROUP_PATHS` | `/run/log/journal,/var/log/journal` in Docker Compose | Journal directories whose group IDs are added to the app user so `journalctl` can read host cron history without running the container as `root`. |
+| `CRON_SPOOL_SOURCE_DIRS` | unset locally, `/host/var/spool/cron,/host/var/spool/cron/crontabs,/host/var/spool/cron/tabs` in Docker Compose | Root-readable source directories copied into an app-readable user-crontab cache before the app drops privileges. |
+| `CRON_SPOOL_CACHE_DIR` | unset locally, `/app/data/cron-user-spool` in Docker Compose | Cache directory where mirrored user crontab files are stored for the non-root app process. |
 | `ALLOWED_ORIGINS` | `http://localhost:4200,http://127.0.0.1:4200,http://localhost:5173,http://127.0.0.1:5173` | Comma-separated CORS and WebSocket origins. |
 | `COOKIE_SECURE` | `false` | Marks the session cookie as `Secure` when set to `true`. |
 | `SESSION_TTL` | `2592000` | Session lifetime in seconds. Default is 30 days. |

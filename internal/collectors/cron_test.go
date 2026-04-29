@@ -27,6 +27,36 @@ func TestParseCronLineSystemCrontabIncludesUser(t *testing.T) {
 	}
 }
 
+func TestParseCronLineUserSpoolInfersUserFromFilename(t *testing.T) {
+	t.Parallel()
+
+	job, ok, warning := parseCronLine("0 2 * * * /home/luca/scripts/sync-repos.sh", "/var/spool/cron/luca", 1)
+	if !ok {
+		t.Fatalf("expected line to parse, warning %q", warning)
+	}
+	if job.Schedule != "0 2 * * *" {
+		t.Fatalf("unexpected schedule %q", job.Schedule)
+	}
+	if job.User != "luca" {
+		t.Fatalf("unexpected user %q", job.User)
+	}
+	if job.Command != "/home/luca/scripts/sync-repos.sh" {
+		t.Fatalf("unexpected command %q", job.Command)
+	}
+}
+
+func TestParseCronLineHostMountedUserSpoolInfersUserFromFilename(t *testing.T) {
+	t.Parallel()
+
+	job, ok, warning := parseCronLine("0 3 * * * /usr/bin/python3 /home/luca/scripts/sync-youtube-music.py", "/host/var/spool/cron/luca", 2)
+	if !ok {
+		t.Fatalf("expected line to parse, warning %q", warning)
+	}
+	if job.User != "luca" {
+		t.Fatalf("unexpected user %q", job.User)
+	}
+}
+
 func TestParseCronExprExpandsWeeklyOccurrences(t *testing.T) {
 	t.Parallel()
 

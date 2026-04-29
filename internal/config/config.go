@@ -28,7 +28,7 @@ func Load() *Config {
 		ProcPath:       envOr("PROC_PATH", "/proc"),
 		LogPath:        envOr("LOG_PATH", "/var/log"),
 		DockerSocket:   envOr("DOCKER_SOCKET", "/var/run/docker.sock"),
-		CronPaths:      envList("CRON_PATHS", "/etc/crontab,/etc/cron.d/*"),
+		CronPaths:      envList("CRON_PATHS", "/etc/crontab,/etc/cron.d/*,/var/spool/cron/*,/var/spool/cron/crontabs/*,/var/spool/cron/tabs/*"),
 		AllowedOrigins: envOr("ALLOWED_ORIGINS", "http://localhost:4200,http://127.0.0.1:4200,http://localhost:5173,http://127.0.0.1:5173"),
 		CookieSecure:   envOr("COOKIE_SECURE", "false") == "true",
 		SessionTTL:     envInt("SESSION_TTL", 60*60*24*30),

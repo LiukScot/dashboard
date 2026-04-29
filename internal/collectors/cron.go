@@ -352,7 +352,7 @@ func parseCronLine(raw string, source string, lineNo int) (CronJob, bool, string
 	}
 
 	commandStart := 5
-	user := ""
+	user := cronSourceUser(source)
 	if len(scheduleFields) > 0 {
 		fields = append(scheduleFields, fields[1:]...)
 	}
@@ -404,6 +404,23 @@ func normalizeScheduleFields(first string) ([]string, string) {
 func usesSystemCronUser(source string) bool {
 	base := filepath.Base(source)
 	return source == "/etc/crontab" || strings.Contains(source, "/etc/cron.d/") || base == "crontab"
+}
+
+func cronSourceUser(source string) string {
+	for _, prefix := range []string{
+		"/var/spool/cron/",
+		"/var/spool/cron/crontabs/",
+		"/var/spool/cron/tabs/",
+		"/host/var/spool/cron/",
+		"/host/var/spool/cron/crontabs/",
+		"/host/var/spool/cron/tabs/",
+		"/app/data/cron-user-spool/",
+	} {
+		if strings.HasPrefix(source, prefix) {
+			return filepath.Base(source)
+		}
+	}
+	return ""
 }
 
 func fingerprint(parts ...string) string {
@@ -688,13 +705,19 @@ func (c *CronCollector) importJournalHistory(byCommand map[string]CronJob, start
 		return 0, nil, false
 	}
 
-	cmd := exec.Command(
-		"journalctl",
-		"-u", "crond",
+	args := []string{
 		"--since", start.Format("2006-01-02 15:04:05"),
 		"--until", end.Format("2006-01-02 15:04:05"),
 		"--no-pager",
-	)
+	}
+	for _, dir := range []string{"/var/log/journal", "/run/log/journal"} {
+		if info, err := os.Stat(dir); err == nil && info.IsDir() {
+			args = append(args, "--directory="+dir)
+			break
+		}
+	}
+
+	cmd := exec.Command("journalctl", args...)
 	output, err := cmd.Output()
 	if err != nil {
 		return 0, []string{fmt.Sprintf("journalctl: %v", err)}, true
