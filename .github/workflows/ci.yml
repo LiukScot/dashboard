@@ -101,7 +101,7 @@ jobs:
 
       - name: Smoke test app
         run: |
-          for i in $(seq 1 30); do
+          for _ in $(seq 1 30); do
             if curl --fail --silent http://127.0.0.1:4200/api/v1/auth/session >/tmp/session.json; then
               break
             fi

@@ -21,7 +21,8 @@ trap cleanup EXIT
 for _ in $(seq 1 60); do
 	if curl --silent --fail http://127.0.0.1:4200/api/v1/auth/session >/dev/null; then
 		cd frontend
-		exec bun run dev --host 0.0.0.0
+		bun run dev --host 0.0.0.0
+		exit $?
 	fi
 
 	sleep 1
