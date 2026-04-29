@@ -139,6 +139,8 @@ export interface SessionResponse {
 export interface CronWeek {
 	start: string;
 	end: string;
+	days: string[];
+	timezone: string;
 	historyCoverage: 'none' | 'partial' | 'good';
 	hiddenJobCount: number;
 	jobs: CronJob[];
@@ -160,6 +162,9 @@ export interface CronOccurrence {
 	id: string;
 	jobId: string;
 	scheduledAt: string;
+	dayKey: string;
+	minutesOfDay: number;
+	displayTime: string;
 	status: 'planned' | 'scheduled' | 'observed' | 'failed';
 	source: string;
 	user: string;

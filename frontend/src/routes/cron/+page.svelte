@@ -4,6 +4,7 @@
 
 	const hours = Array.from({ length: 24 }, (_, hour) => hour);
 	const dayNames = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
+	let loadToken = 0;
 
 	let weekStart = $state(startOfWeek(new Date()));
 	let week = $state<CronWeek | null>(null);
@@ -15,17 +16,23 @@
 	onMount(loadWeek);
 
 	async function loadWeek() {
+		const token = ++loadToken;
+		const requestedWeekStart = weekStart;
 		loading = true;
 		error = '';
 		hideError = '';
 		try {
-			week = await api.cronWeek(toDateInput(weekStart));
-			selected = week.occurrences[0] ?? null;
+			const nextWeek = await api.cronWeek(toDateInput(requestedWeekStart));
+			if (token !== loadToken) return;
+			week = nextWeek;
+			selected = nextWeek.occurrences[0] ?? null;
 		} catch (err) {
+			if (token !== loadToken) return;
 			error = err instanceof Error ? err.message : 'Failed to load cron week';
 			week = null;
 			selected = null;
 		} finally {
+			if (token !== loadToken) return;
 			loading = false;
 		}
 	}
@@ -52,17 +59,16 @@
 	}
 
 	function daysInWeek() {
-		return Array.from({ length: 7 }, (_, index) => addDays(weekStart, index));
+		return week?.days ?? Array.from({ length: 7 }, (_, index) => toDateInput(addDays(weekStart, index)));
 	}
 
-	function occurrencesForDay(day: Date) {
+	function occurrencesForDay(dayKey: string) {
 		if (!week) return [];
-		return week.occurrences.filter((occurrence) => sameDay(new Date(occurrence.scheduledAt), day));
+		return week.occurrences.filter((occurrence) => occurrence.dayKey === dayKey);
 	}
 
 	function occurrenceStyle(occurrence: CronOccurrence) {
-		const when = new Date(occurrence.scheduledAt);
-		const top = ((when.getHours() * 60 + when.getMinutes()) / 1440) * 100;
+		const top = (occurrence.minutesOfDay / 1440) * 100;
 		return `top: ${top}%;`;
 	}
 
@@ -83,12 +89,17 @@
 		return `${String(hour).padStart(2, '0')}:00`;
 	}
 
-	function formatTime(value: string) {
-		return new Date(value).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+	function formatTimeLabel(occurrence: CronOccurrence) {
+		return occurrence.displayTime;
 	}
 
-	function formatDate(value: Date) {
-		return value.toLocaleDateString([], { month: 'short', day: 'numeric' });
+	function formatScheduledLabel(occurrence: CronOccurrence) {
+		return `${formatDate(occurrence.dayKey)}, ${occurrence.displayTime}`;
+	}
+
+	function formatDate(value: string) {
+		const [year, month, day] = value.split('-').map(Number);
+		return new Date(year, month - 1, day).toLocaleDateString([], { month: 'short', day: 'numeric' });
 	}
 
 	function weekTitle() {
@@ -109,10 +120,6 @@
 		const date = new Date(value);
 		date.setDate(date.getDate() + days);
 		return date;
-	}
-
-	function sameDay(a: Date, b: Date) {
-		return a.getFullYear() === b.getFullYear() && a.getMonth() === b.getMonth() && a.getDate() === b.getDate();
 	}
 
 	function toDateInput(value: Date) {
@@ -196,9 +203,9 @@
 				<div class="grid grid-cols-[58px_repeat(7,minmax(128px,1fr))] border-b border-border">
 					<div class="border-r border-border"></div>
 					{#each daysInWeek() as day, index}
-						<div class="border-r border-border px-3 py-2 last:border-r-0 {sameDay(day, new Date()) ? 'bg-accent/5' : ''}">
+						<div class="border-r border-border px-3 py-2 last:border-r-0 {day === toDateInput(new Date()) ? 'bg-accent/5' : ''}">
 							<div class="text-xs font-semibold text-text-dim">{dayNames[index]}</div>
-							<div class="text-xl font-semibold {sameDay(day, new Date()) ? 'text-accent' : 'text-text'}">{formatDate(day)}</div>
+							<div class="text-xl font-semibold {day === toDateInput(new Date()) ? 'text-accent' : 'text-text'}">{formatDate(day)}</div>
 						</div>
 					{/each}
 				</div>
@@ -228,7 +235,7 @@
 										onclick={() => (selected = occurrence)}
 										title={occurrence.command}
 									>
-										<div class="font-mono text-text-dim">{formatTime(occurrence.scheduledAt)}</div>
+											<div class="font-mono text-text-dim">{formatTimeLabel(occurrence)}</div>
 										<div class="truncate font-medium">{shortCommand(occurrence.command)}</div>
 									</button>
 								{/each}
@@ -265,7 +272,7 @@
 					<dl class="space-y-3 text-sm">
 						<div>
 							<dt class="text-xs text-text-dim">Scheduled</dt>
-							<dd>{new Date(selected.scheduledAt).toLocaleString()}</dd>
+							<dd>{formatScheduledLabel(selected)}</dd>
 						</div>
 						<div>
 							<dt class="text-xs text-text-dim">Command</dt>

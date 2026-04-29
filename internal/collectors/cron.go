@@ -31,13 +31,16 @@ type CronJob struct {
 }
 
 type CronOccurrence struct {
-	ID          string `json:"id"`
-	JobID       string `json:"jobId"`
-	ScheduledAt string `json:"scheduledAt"`
-	Status      string `json:"status"`
-	Source      string `json:"source"`
-	User        string `json:"user"`
-	Command     string `json:"command"`
+	ID           string `json:"id"`
+	JobID        string `json:"jobId"`
+	ScheduledAt  string `json:"scheduledAt"`
+	DayKey       string `json:"dayKey"`
+	MinutesOfDay int    `json:"minutesOfDay"`
+	DisplayTime  string `json:"displayTime"`
+	Status       string `json:"status"`
+	Source       string `json:"source"`
+	User         string `json:"user"`
+	Command      string `json:"command"`
 }
 
 type CronHistoryItem struct {
@@ -52,6 +55,8 @@ type CronHistoryItem struct {
 type CronWeek struct {
 	Start           string            `json:"start"`
 	End             string            `json:"end"`
+	Days            []string          `json:"days"`
+	Timezone        string            `json:"timezone"`
 	HistoryCoverage string            `json:"historyCoverage"`
 	HiddenJobCount  int               `json:"hiddenJobCount"`
 	Jobs            []CronJob         `json:"jobs"`
@@ -91,6 +96,8 @@ func (c *CronCollector) Week(start time.Time) (CronWeek, error) {
 		if err != nil {
 			warnings = append(warnings, fmt.Sprintf("hidden jobs: %v", err))
 		} else {
+			current := jobSet(jobs)
+			hidden = c.pruneStaleHidden(hidden, current)
 			hiddenCount = len(hidden)
 			jobs = visibleJobs(jobs, hidden)
 		}
@@ -105,13 +112,16 @@ func (c *CronCollector) Week(start time.Time) (CronWeek, error) {
 		}
 		for _, when := range expr.occurrences(weekStart, weekEnd) {
 			occurrences = append(occurrences, CronOccurrence{
-				ID:          job.Fingerprint + "-" + when.Format("200601021504"),
-				JobID:       job.Fingerprint,
-				ScheduledAt: when.Format(time.RFC3339),
-				Status:      statusForOccurrence(when),
-				Source:      job.Source,
-				User:        job.User,
-				Command:     job.Command,
+				ID:           job.Fingerprint + "-" + when.Format("200601021504"),
+				JobID:        job.Fingerprint,
+				ScheduledAt:  when.Format(time.RFC3339),
+				DayKey:       when.Format("2006-01-02"),
+				MinutesOfDay: when.Hour()*60 + when.Minute(),
+				DisplayTime:  when.Format("15:04"),
+				Status:       statusForOccurrence(when),
+				Source:       job.Source,
+				User:         job.User,
+				Command:      job.Command,
 			})
 		}
 	}
@@ -165,6 +175,8 @@ func (c *CronCollector) Week(start time.Time) (CronWeek, error) {
 	return CronWeek{
 		Start:           weekStart.Format("2006-01-02"),
 		End:             weekEnd.Add(-time.Second).Format("2006-01-02"),
+		Days:            dayKeys(weekStart, 7),
+		Timezone:        weekStart.Location().String(),
 		HistoryCoverage: coverage,
 		HiddenJobCount:  hiddenCount,
 		Jobs:            jobs,
@@ -233,9 +245,13 @@ func (c *CronCollector) HiddenJobCount() (int, error) {
 	if c.db == nil {
 		return 0, fmt.Errorf("database unavailable")
 	}
-	var count int
-	err := c.db.QueryRow(`SELECT COUNT(*) FROM cron_hidden_jobs`).Scan(&count)
-	return count, err
+	jobs, _ := c.ReadJobs()
+	hidden, err := c.hiddenJobIDs()
+	if err != nil {
+		return 0, err
+	}
+	hidden = c.pruneStaleHidden(hidden, jobSet(jobs))
+	return len(hidden), nil
 }
 
 func (c *CronCollector) hiddenJobIDs() (map[string]bool, error) {
@@ -264,6 +280,28 @@ func visibleJobs(jobs []CronJob, hidden map[string]bool) []CronJob {
 		}
 	}
 	return visible
+}
+
+func jobSet(jobs []CronJob) map[string]bool {
+	current := make(map[string]bool, len(jobs))
+	for _, job := range jobs {
+		current[job.Fingerprint] = true
+	}
+	return current
+}
+
+func (c *CronCollector) pruneStaleHidden(hidden map[string]bool, current map[string]bool) map[string]bool {
+	active := map[string]bool{}
+	for fingerprint := range hidden {
+		if current[fingerprint] {
+			active[fingerprint] = true
+			continue
+		}
+		if c.db != nil {
+			_, _ = c.db.Exec(`DELETE FROM cron_hidden_jobs WHERE job_id = ?`, fingerprint)
+		}
+	}
+	return active
 }
 
 func (c *CronCollector) resolveFiles() ([]string, []string) {
@@ -304,17 +342,31 @@ func parseCronLine(raw string, source string, lineNo int) (CronJob, bool, string
 		return CronJob{}, false, ""
 	}
 	fields := strings.Fields(line)
-	if len(fields) < 6 || strings.HasPrefix(fields[0], "@") {
+	if len(fields) < 2 {
 		return CronJob{}, false, ""
 	}
 
-	schedule := strings.Join(fields[:5], " ")
+	scheduleFields, warning := normalizeScheduleFields(fields[0])
+	if warning != "" {
+		return CronJob{}, false, fmt.Sprintf("skip %s:%d: %s", source, lineNo, warning)
+	}
+
 	commandStart := 5
 	user := ""
-	if usesSystemCronUser(source) && len(fields) >= 7 {
+	if len(scheduleFields) > 0 {
+		fields = append(scheduleFields, fields[1:]...)
+	}
+	if len(fields) < 6 {
+		return CronJob{}, false, fmt.Sprintf("skip %s:%d: malformed cron line", source, lineNo)
+	}
+	if usesSystemCronUser(source) {
+		if len(fields) < 7 {
+			return CronJob{}, false, fmt.Sprintf("skip %s:%d: missing cron user", source, lineNo)
+		}
 		user = fields[5]
 		commandStart = 6
 	}
+	schedule := strings.Join(fields[:5], " ")
 	command := strings.Join(fields[commandStart:], " ")
 	if command == "" {
 		return CronJob{}, false, fmt.Sprintf("skip %s:%d: missing command", source, lineNo)
@@ -328,6 +380,25 @@ func parseCronLine(raw string, source string, lineNo int) (CronJob, bool, string
 		Command:     command,
 	}
 	return job, true, ""
+}
+
+func normalizeScheduleFields(first string) ([]string, string) {
+	if !strings.HasPrefix(first, "@") {
+		return nil, ""
+	}
+	nicknames := map[string]string{
+		"@yearly":   "0 0 1 1 *",
+		"@annually": "0 0 1 1 *",
+		"@monthly":  "0 0 1 * *",
+		"@weekly":   "0 0 * * 0",
+		"@daily":    "0 0 * * *",
+		"@midnight": "0 0 * * *",
+		"@hourly":   "0 * * * *",
+	}
+	if expanded, ok := nicknames[strings.ToLower(first)]; ok {
+		return strings.Fields(expanded), ""
+	}
+	return nil, fmt.Sprintf("unsupported cron nickname %q", first)
 }
 
 func usesSystemCronUser(source string) bool {
@@ -345,6 +416,8 @@ func parseCronExpr(raw string) (cronExpr, error) {
 	if len(fields) != 5 {
 		return cronExpr{}, fmt.Errorf("expected 5 fields")
 	}
+	fields[3] = normalizeNamedField(fields[3], monthNames)
+	fields[4] = normalizeNamedField(fields[4], weekdayNames)
 	minutes, _, err := parseCronField(fields[0], 0, 59)
 	if err != nil {
 		return cronExpr{}, fmt.Errorf("minute: %w", err)
@@ -372,6 +445,23 @@ func parseCronExpr(raw string) (cronExpr, error) {
 	}
 	dow = uniqueSorted(dow)
 	return cronExpr{minutes: minutes, hours: hours, dom: dom, months: months, dow: dow, domWildcard: domWildcard, dowWildcard: dowWildcard}, nil
+}
+
+var monthNames = map[string]string{
+	"jan": "1", "feb": "2", "mar": "3", "apr": "4", "may": "5", "jun": "6",
+	"jul": "7", "aug": "8", "sep": "9", "oct": "10", "nov": "11", "dec": "12",
+}
+
+var weekdayNames = map[string]string{
+	"sun": "0", "mon": "1", "tue": "2", "wed": "3", "thu": "4", "fri": "5", "sat": "6",
+}
+
+func normalizeNamedField(raw string, mapping map[string]string) string {
+	result := strings.ToLower(raw)
+	for name, value := range mapping {
+		result = strings.ReplaceAll(result, name, value)
+	}
+	return result
 }
 
 func parseCronField(raw string, min int, max int) ([]int, bool, error) {
@@ -543,6 +633,7 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 	if c.logPath == "" {
 		return 0, nil
 	}
+	reference := end.Add(-time.Second)
 	byCommand := map[string]CronJob{}
 	for _, job := range jobs {
 		key := historyKey(job.User, job.Command)
@@ -571,7 +662,7 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 		}
 		scanner := bufio.NewScanner(file)
 		for scanner.Scan() {
-			observedAt, user, command, ok := parseCronLogLine(scanner.Text(), time.Now())
+			observedAt, user, command, ok := parseCronLogLine(scanner.Text(), reference)
 			if !ok || observedAt.Before(start) || !observedAt.Before(end) {
 				continue
 			}
@@ -612,7 +703,7 @@ func (c *CronCollector) importJournalHistory(byCommand map[string]CronJob, start
 	imported := 0
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
 	for scanner.Scan() {
-		observedAt, user, command, ok := parseCronLogLine(scanner.Text(), time.Now())
+		observedAt, user, command, ok := parseCronLogLine(scanner.Text(), end.Add(-time.Second))
 		if !ok || observedAt.Before(start) || !observedAt.Before(end) {
 			continue
 		}
@@ -686,9 +777,10 @@ func historyKey(user string, command string) string {
 	return strings.TrimSpace(user) + "\x00" + strings.TrimSpace(command)
 }
 
-func plural(count int) string {
-	if count == 1 {
-		return ""
+func dayKeys(start time.Time, count int) []string {
+	days := make([]string, 0, count)
+	for i := 0; i < count; i++ {
+		days = append(days, start.AddDate(0, 0, i).Format("2006-01-02"))
 	}
-	return "s"
+	return days
 }

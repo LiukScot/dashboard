@@ -45,6 +45,21 @@ func TestParseCronExprExpandsWeeklyOccurrences(t *testing.T) {
 	}
 }
 
+func TestParseCronExprSupportsNamedWeekday(t *testing.T) {
+	t.Parallel()
+
+	expr, err := parseCronExpr("0 9 * * sun")
+	if err != nil {
+		t.Fatalf("parse expr: %v", err)
+	}
+
+	start := time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC)
+	got := expr.occurrences(start, start.AddDate(0, 0, 7))
+	if len(got) != 1 || got[0].Weekday() != time.Sunday {
+		t.Fatalf("expected one Sunday occurrence, got %#v", got)
+	}
+}
+
 func TestCronCollectorReadsCronFiles(t *testing.T) {
 	t.Parallel()
 
@@ -64,6 +79,21 @@ func TestCronCollectorReadsCronFiles(t *testing.T) {
 	}
 	if jobs[0].Command != "/bin/echo hello" {
 		t.Fatalf("unexpected command %q", jobs[0].Command)
+	}
+}
+
+func TestParseCronLineSupportsHourlyNickname(t *testing.T) {
+	t.Parallel()
+
+	job, ok, warning := parseCronLine("@hourly root /usr/local/bin/hourly-task", "/etc/cron.d/custom", 3)
+	if !ok {
+		t.Fatalf("expected nickname line to parse, warning %q", warning)
+	}
+	if job.Schedule != "0 * * * *" {
+		t.Fatalf("unexpected schedule %q", job.Schedule)
+	}
+	if job.User != "root" {
+		t.Fatalf("unexpected user %q", job.User)
 	}
 }
 
@@ -135,5 +165,59 @@ func TestCronCollectorHidesJobsFromWeek(t *testing.T) {
 	}
 	if count != 0 {
 		t.Fatalf("expected hidden count 0, got %d", count)
+	}
+}
+
+func TestCronCollectorPrunesStaleHiddenJobs(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	dbPath := filepath.Join(dir, "dashboard.sqlite")
+	database, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := db.RunMigrations(database); err != nil {
+		t.Fatalf("migrations: %v", err)
+	}
+
+	cronPath := filepath.Join(dir, "crontab")
+	if err := os.WriteFile(cronPath, []byte("0 * * * * root run-parts /etc/cron.hourly\n"), 0600); err != nil {
+		t.Fatalf("write crontab: %v", err)
+	}
+
+	collector := NewCronCollector(database, []string{cronPath}, "")
+	week, err := collector.Week(time.Date(2026, 4, 27, 0, 0, 0, 0, time.UTC))
+	if err != nil {
+		t.Fatalf("load week: %v", err)
+	}
+	if err := collector.HideJob(week.Jobs[0].Fingerprint); err != nil {
+		t.Fatalf("hide job: %v", err)
+	}
+
+	if err := os.WriteFile(cronPath, []byte("15 * * * * root /usr/local/bin/backup\n"), 0600); err != nil {
+		t.Fatalf("rewrite crontab: %v", err)
+	}
+
+	count, err := collector.HiddenJobCount()
+	if err != nil {
+		t.Fatalf("count hidden jobs: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected stale hidden job to be pruned, got %d", count)
+	}
+}
+
+func TestParseCronLogLineUsesRequestedWeekYear(t *testing.T) {
+	t.Parallel()
+
+	reference := time.Date(2025, 1, 2, 0, 0, 0, 0, time.UTC)
+	observedAt, _, _, ok := parseCronLogLine("Dec 31 23:59:59 host CRON[123]: (root) CMD (/usr/local/bin/backup)", reference)
+	if !ok {
+		t.Fatal("expected cron log line to parse")
+	}
+	if observedAt.Year() != 2024 {
+		t.Fatalf("expected prior year inference, got %s", observedAt.Format(time.RFC3339))
 	}
 }
