@@ -66,6 +66,14 @@ func (d *DockerCollector) ListContainers() ([]Container, error) {
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, fmt.Errorf("read containers body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("docker list: unexpected status %d: %s", resp.StatusCode, string(body))
+	}
+
 	var raw []struct {
 		Id      string            `json:"Id"`
 		Names   []string          `json:"Names"`
@@ -82,7 +90,7 @@ func (d *DockerCollector) ListContainers() ([]Container, error) {
 		} `json:"Ports"`
 	}
 
-	if err := json.NewDecoder(resp.Body).Decode(&raw); err != nil {
+	if err := json.Unmarshal(body, &raw); err != nil {
 		return nil, fmt.Errorf("decode containers: %w", err)
 	}
 
@@ -136,6 +144,9 @@ func (d *DockerCollector) GetContainerStats(containerID string) (*ContainerStats
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("read stats body: %w", err)
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("docker stats %s: unexpected status %d", containerID, resp.StatusCode)
 	}
 
 	var raw struct {

@@ -112,7 +112,7 @@ func (f *Fail2BanCollector) getJailStatus(name string) (*JailStatus, error) {
 	return jail, nil
 }
 
-var banLogPattern = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d+)\s+fail2ban\.\w+\s+\[\d+\]:\s+\w+\s+\[(\w+)\]\s+(Ban|Unban)\s+(\S+)`)
+var banLogPattern = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d+)\s+fail2ban\.\w+\s+\[\d+\]:\s+\w+\s+\[([\w.-]+)\]\s+(Ban|Unban)\s+(\S+)`)
 
 func (f *Fail2BanCollector) GetRecentBans(limit int) ([]BanEvent, error) {
 	logFile := filepath.Join(f.logPath, "fail2ban.log")
@@ -148,6 +148,10 @@ func (f *Fail2BanCollector) GetRecentBans(limit int) ([]BanEvent, error) {
 			Action:    strings.ToLower(matches[3]),
 			IP:        matches[4],
 		})
+	}
+
+	if err := scanner.Err(); err != nil {
+		return nil, fmt.Errorf("scan fail2ban log: %w", err)
 	}
 
 	// Return last N events
