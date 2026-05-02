@@ -87,6 +87,42 @@ func TestGetAllStatsCollectsRunningContainersInParallel(t *testing.T) {
 	}
 }
 
+func TestListContainersReturnsErrorOnHTTPFailure(t *testing.T) {
+	t.Parallel()
+
+	mux := http.NewServeMux()
+	mux.HandleFunc("/v1.43/containers/json", func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+		if err := json.NewEncoder(w).Encode(map[string]string{"message": "boom"}); err != nil {
+			t.Fatalf("encode error payload: %v", err)
+		}
+	})
+
+	server := httptest.NewServer(mux)
+	t.Cleanup(server.Close)
+
+	addr := strings.TrimPrefix(server.URL, "http://")
+	collector := &DockerCollector{
+		client: &http.Client{
+			Transport: &http.Transport{
+				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
+					var d net.Dialer
+					return d.DialContext(ctx, "tcp", addr)
+				},
+			},
+			Timeout: time.Second,
+		},
+	}
+
+	_, err := collector.ListContainers()
+	if err == nil {
+		t.Fatal("expected HTTP failure to return error")
+	}
+	if !strings.Contains(err.Error(), "500") || !strings.Contains(err.Error(), "boom") {
+		t.Fatalf("expected error to include status and body, got: %v", err)
+	}
+}
+
 func TestGetContainerStatsReturnsErrorOnHTTPFailure(t *testing.T) {
 	t.Parallel()
 
