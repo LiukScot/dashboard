@@ -89,6 +89,9 @@ func readLogFile(path string, unitName string, priorityFilter int) ([]LogEntry, 
 	for scanner.Scan() {
 		lines = append(lines, scanner.Text())
 	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
 
 	// Take last 500 lines
 	if len(lines) > 500 {
@@ -225,4 +228,3 @@ func priorityLabel(p int) string {
 		return "unknown"
 	}
 }
-

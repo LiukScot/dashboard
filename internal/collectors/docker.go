@@ -137,6 +137,9 @@ func (d *DockerCollector) GetContainerStats(containerID string) (*ContainerStats
 	if err != nil {
 		return nil, fmt.Errorf("read stats body: %w", err)
 	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("docker stats %s: unexpected status %d", containerID, resp.StatusCode)
+	}
 
 	var raw struct {
 		Name     string `json:"name"`
