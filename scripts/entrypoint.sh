@@ -57,6 +57,9 @@ chown "$APP_UID:$APP_GID" /app/data >/dev/null 2>&1 || true
 
 sync_spool() {
 	mkdir -p "$CRON_SPOOL_CACHE_DIR"
+	# Purge first so deletions on the host (e.g. `crontab -r`) propagate to the
+	# cache. Without this, removed crontabs would linger until container restart.
+	find "$CRON_SPOOL_CACHE_DIR" -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
 	_old_ifs="$IFS"
 	IFS=','
 	for spool_dir in $CRON_SPOOL_SOURCE_DIRS; do
@@ -75,8 +78,6 @@ sync_spool() {
 	chown -R "$APP_UID:$APP_GID" "$CRON_SPOOL_CACHE_DIR" >/dev/null 2>&1 || true
 }
 
-mkdir -p "$CRON_SPOOL_CACHE_DIR"
-find "$CRON_SPOOL_CACHE_DIR" -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
 sync_spool
 
 # Background watcher: re-sync spool cache on host crontab changes.
