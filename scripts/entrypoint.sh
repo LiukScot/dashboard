@@ -55,24 +55,51 @@ IFS="$OLD_IFS"
 mkdir -p /app/data
 chown "$APP_UID:$APP_GID" /app/data >/dev/null 2>&1 || true
 
-mkdir -p "$CRON_SPOOL_CACHE_DIR"
-find "$CRON_SPOOL_CACHE_DIR" -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
-
-IFS=','
-for spool_dir in $CRON_SPOOL_SOURCE_DIRS; do
-	spool_dir="$(printf '%s' "$spool_dir" | xargs)"
-	if [ -z "$spool_dir" ] || [ ! -d "$spool_dir" ]; then
-		continue
-	fi
-	for spool_file in "$spool_dir"/*; do
-		if [ ! -f "$spool_file" ]; then
+sync_spool() {
+	mkdir -p "$CRON_SPOOL_CACHE_DIR"
+	_old_ifs="$IFS"
+	IFS=','
+	for spool_dir in $CRON_SPOOL_SOURCE_DIRS; do
+		spool_dir="$(printf '%s' "$spool_dir" | xargs)"
+		if [ -z "$spool_dir" ] || [ ! -d "$spool_dir" ]; then
 			continue
 		fi
-		cp "$spool_file" "$CRON_SPOOL_CACHE_DIR/$(basename "$spool_file")"
+		for spool_file in "$spool_dir"/*; do
+			if [ ! -f "$spool_file" ]; then
+				continue
+			fi
+			cp "$spool_file" "$CRON_SPOOL_CACHE_DIR/$(basename "$spool_file")"
+		done
 	done
-done
-IFS="$OLD_IFS"
+	IFS="$_old_ifs"
+	chown -R "$APP_UID:$APP_GID" "$CRON_SPOOL_CACHE_DIR" >/dev/null 2>&1 || true
+}
 
-chown -R "$APP_UID:$APP_GID" "$CRON_SPOOL_CACHE_DIR" >/dev/null 2>&1 || true
+mkdir -p "$CRON_SPOOL_CACHE_DIR"
+find "$CRON_SPOOL_CACHE_DIR" -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
+sync_spool
+
+# Background watcher: re-sync spool cache on host crontab changes.
+# Without this, `crontab -e` edits would only show in dashboard after container restart.
+(
+	WATCH_DIRS=""
+	IFS=','
+	for spool_dir in $CRON_SPOOL_SOURCE_DIRS; do
+		spool_dir="$(printf '%s' "$spool_dir" | xargs)"
+		if [ -n "$spool_dir" ] && [ -d "$spool_dir" ]; then
+			WATCH_DIRS="$WATCH_DIRS $spool_dir"
+		fi
+	done
+	IFS="$OLD_IFS"
+	if [ -z "$WATCH_DIRS" ]; then
+		exit 0
+	fi
+	# close_write: editor saved a file. moved_to: atomic replace (crontab -e default).
+	# delete: user removed their crontab. Loop restarts inotifywait if it ever exits.
+	while true; do
+		inotifywait -qq -e close_write,moved_to,delete,create $WATCH_DIRS || sleep 5
+		sync_spool
+	done
+) &
 
 exec gosu "$APP_USER" /app/dashboard
