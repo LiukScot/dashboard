@@ -55,24 +55,56 @@ IFS="$OLD_IFS"
 mkdir -p /app/data
 chown "$APP_UID:$APP_GID" /app/data >/dev/null 2>&1 || true
 
-mkdir -p "$CRON_SPOOL_CACHE_DIR"
-find "$CRON_SPOOL_CACHE_DIR" -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
-
-IFS=','
-for spool_dir in $CRON_SPOOL_SOURCE_DIRS; do
-	spool_dir="$(printf '%s' "$spool_dir" | xargs)"
-	if [ -z "$spool_dir" ] || [ ! -d "$spool_dir" ]; then
-		continue
-	fi
-	for spool_file in "$spool_dir"/*; do
-		if [ ! -f "$spool_file" ]; then
+sync_spool() {
+	mkdir -p "$CRON_SPOOL_CACHE_DIR"
+	# Purge first so deletions on the host (e.g. `crontab -r`) propagate to the
+	# cache. Without this, removed crontabs would linger until container restart.
+	find "$CRON_SPOOL_CACHE_DIR" -mindepth 1 -maxdepth 1 -type f -delete 2>/dev/null || true
+	_old_ifs="$IFS"
+	IFS=','
+	for spool_dir in $CRON_SPOOL_SOURCE_DIRS; do
+		spool_dir="$(printf '%s' "$spool_dir" | xargs)"
+		if [ -z "$spool_dir" ] || [ ! -d "$spool_dir" ]; then
 			continue
 		fi
-		cp "$spool_file" "$CRON_SPOOL_CACHE_DIR/$(basename "$spool_file")"
+		for spool_file in "$spool_dir"/*; do
+			if [ ! -f "$spool_file" ]; then
+				continue
+			fi
+			cp "$spool_file" "$CRON_SPOOL_CACHE_DIR/$(basename "$spool_file")"
+		done
 	done
-done
-IFS="$OLD_IFS"
+	IFS="$_old_ifs"
+	chown -R "$APP_UID:$APP_GID" "$CRON_SPOOL_CACHE_DIR" >/dev/null 2>&1 || true
+}
 
-chown -R "$APP_UID:$APP_GID" "$CRON_SPOOL_CACHE_DIR" >/dev/null 2>&1 || true
+sync_spool
+
+# Background watcher: re-sync spool cache on host crontab changes.
+# Without this, `crontab -e` edits would only show in dashboard after container restart.
+(
+	# Build the watcher's argument list as positional parameters so paths
+	# containing whitespace survive the call to inotifywait (no arrays in
+	# POSIX sh).
+	set --
+	IFS=','
+	for spool_dir in $CRON_SPOOL_SOURCE_DIRS; do
+		spool_dir="$(printf '%s' "$spool_dir" | xargs)"
+		if [ -n "$spool_dir" ] && [ -d "$spool_dir" ]; then
+			set -- "$@" "$spool_dir"
+		fi
+	done
+	IFS="$OLD_IFS"
+	if [ "$#" -eq 0 ]; then
+		exit 0
+	fi
+	# close_write: editor saved a file. moved_to: atomic replace (crontab -e default).
+	# delete: user removed their crontab; sync_spool() purges stale cache entries.
+	# Outer loop restarts inotifywait if it ever exits abnormally.
+	while true; do
+		inotifywait -qq -e close_write,moved_to,delete,create "$@" || sleep 5
+		sync_spool
+	done
+) &
 
 exec gosu "$APP_USER" /app/dashboard

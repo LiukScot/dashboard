@@ -23,7 +23,7 @@ RUN CGO_ENABLED=1 go build -o /user-cli ./scripts/user-cli.go
 # Stage 3: Runtime
 FROM debian:bookworm-slim
 RUN apt-get update \
-	&& apt-get install -y --no-install-recommends ca-certificates fail2ban gosu systemd \
+	&& apt-get install -y --no-install-recommends ca-certificates fail2ban gosu systemd inotify-tools \
 	&& rm -rf /var/lib/apt/lists/*
 WORKDIR /app
 
