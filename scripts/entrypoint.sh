@@ -83,22 +83,26 @@ sync_spool
 # Background watcher: re-sync spool cache on host crontab changes.
 # Without this, `crontab -e` edits would only show in dashboard after container restart.
 (
-	WATCH_DIRS=""
+	# Build the watcher's argument list as positional parameters so paths
+	# containing whitespace survive the call to inotifywait (no arrays in
+	# POSIX sh).
+	set --
 	IFS=','
 	for spool_dir in $CRON_SPOOL_SOURCE_DIRS; do
 		spool_dir="$(printf '%s' "$spool_dir" | xargs)"
 		if [ -n "$spool_dir" ] && [ -d "$spool_dir" ]; then
-			WATCH_DIRS="$WATCH_DIRS $spool_dir"
+			set -- "$@" "$spool_dir"
 		fi
 	done
 	IFS="$OLD_IFS"
-	if [ -z "$WATCH_DIRS" ]; then
+	if [ "$#" -eq 0 ]; then
 		exit 0
 	fi
 	# close_write: editor saved a file. moved_to: atomic replace (crontab -e default).
-	# delete: user removed their crontab. Loop restarts inotifywait if it ever exits.
+	# delete: user removed their crontab; sync_spool() purges stale cache entries.
+	# Outer loop restarts inotifywait if it ever exits abnormally.
 	while true; do
-		inotifywait -qq -e close_write,moved_to,delete,create $WATCH_DIRS || sleep 5
+		inotifywait -qq -e close_write,moved_to,delete,create "$@" || sleep 5
 		sync_spool
 	done
 ) &
