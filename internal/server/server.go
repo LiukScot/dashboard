@@ -21,6 +21,7 @@ type Server struct {
 	cfg        *config.Config
 	authSvc    *auth.Service
 	sysColl    *collectors.SystemCollector
+	sysHist    *collectors.SystemHistory
 	dockerColl *collectors.DockerCollector
 	f2bColl    *collectors.Fail2BanCollector
 	logColl    *collectors.LogCollector
@@ -31,6 +32,7 @@ type Server struct {
 
 func New(cfg *config.Config, authSvc *auth.Service,
 	sysColl *collectors.SystemCollector,
+	sysHist *collectors.SystemHistory,
 	dockerColl *collectors.DockerCollector,
 	f2bColl *collectors.Fail2BanCollector,
 	logColl *collectors.LogCollector,
@@ -43,6 +45,7 @@ func New(cfg *config.Config, authSvc *auth.Service,
 		cfg:        cfg,
 		authSvc:    authSvc,
 		sysColl:    sysColl,
+		sysHist:    sysHist,
 		dockerColl: dockerColl,
 		f2bColl:    f2bColl,
 		logColl:    logColl,
@@ -65,6 +68,7 @@ func (s *Server) routes() {
 	// System routes
 	s.mux.HandleFunc("GET /api/v1/system/overview", s.withAuth(s.handleSystemOverview))
 	s.mux.HandleFunc("GET /api/v1/system/cpu-history", s.withAuth(s.handleCPUHistory))
+	s.mux.HandleFunc("GET /api/v1/system/history", s.withAuth(s.handleSystemHistory))
 	s.mux.HandleFunc("GET /api/v1/system/network", s.withAuth(s.handleNetwork))
 
 	// Docker routes
@@ -255,6 +259,37 @@ func (s *Server) handleSystemOverview(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleCPUHistory(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, s.sysColl.History())
+}
+
+var historyRanges = map[string]time.Duration{
+	"1h":  time.Hour,
+	"6h":  6 * time.Hour,
+	"24h": 24 * time.Hour,
+	"7d":  7 * 24 * time.Hour,
+	"30d": 30 * 24 * time.Hour,
+}
+
+func (s *Server) handleSystemHistory(w http.ResponseWriter, r *http.Request) {
+	if s.sysHist == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]string{"error": "history unavailable"})
+		return
+	}
+	rangeKey := r.URL.Query().Get("range")
+	if rangeKey == "" {
+		rangeKey = "24h"
+	}
+	dur, ok := historyRanges[rangeKey]
+	if !ok {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid range"})
+		return
+	}
+	samples, err := s.sysHist.Query(dur)
+	if err != nil {
+		log.Printf("system history error: %v", err)
+		writeJSON(w, http.StatusInternalServerError, map[string]string{"error": "failed to load history"})
+		return
+	}
+	writeJSON(w, http.StatusOK, samples)
 }
 
 func (s *Server) handleNetwork(w http.ResponseWriter, r *http.Request) {
