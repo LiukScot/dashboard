@@ -99,7 +99,28 @@ func (s *Server) Start() error {
 	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 	log.Printf("dashboard listening on %s", addr)
 
-	return http.ListenAndServe(addr, s.corsMiddleware(s.mux))
+	srv := &http.Server{
+		Addr:              addr,
+		Handler:           s.securityHeaders(s.corsMiddleware(s.mux)),
+		ReadHeaderTimeout: 10 * time.Second,
+		ReadTimeout:       30 * time.Second,
+		WriteTimeout:      0, // 0 because /ws upgrades to a long-lived stream
+		IdleTimeout:       120 * time.Second,
+	}
+	return srv.ListenAndServe()
+}
+
+// securityHeaders sets baseline response headers that harden the SPA + cookie
+// session against XSS-driven clickjacking and MIME sniffing. CSP is left out
+// because the SPA bundle still inlines styles via Tailwind; add when fixed.
+func (s *Server) securityHeaders(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		h := w.Header()
+		h.Set("X-Content-Type-Options", "nosniff")
+		h.Set("X-Frame-Options", "DENY")
+		h.Set("Referrer-Policy", "no-referrer")
+		next.ServeHTTP(w, r)
+	})
 }
 
 // CORS middleware
@@ -402,8 +423,13 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	// Sanitize path to prevent directory traversal
 	cleaned := filepath.Clean("/" + r.URL.Path)
 	filePath := filepath.Join(publicDir, cleaned)
-	absPublic, _ := filepath.Abs(publicDir)
-	absFile, _ := filepath.Abs(filePath)
+	absPublic, errPub := filepath.Abs(publicDir)
+	absFile, errFile := filepath.Abs(filePath)
+	if errPub != nil || errFile != nil {
+		log.Printf("static abs path resolution failed: pub=%v file=%v", errPub, errFile)
+		http.Error(w, "internal error", http.StatusInternalServerError)
+		return
+	}
 	if !strings.HasPrefix(absFile, absPublic+string(os.PathSeparator)) && absFile != absPublic {
 		http.NotFound(w, r)
 		return
@@ -437,5 +463,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 func writeJSON(w http.ResponseWriter, status int, data interface{}) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(data)
+	if err := json.NewEncoder(w).Encode(data); err != nil {
+		log.Printf("writeJSON encode error (status=%d): %v", status, err)
+	}
 }

@@ -110,6 +110,9 @@ func (c *SystemCollector) CollectNetwork() ([]NetworkMetrics, error) {
 	var metrics []NetworkMetrics
 
 	lines := strings.Split(string(data), "\n")
+	if len(lines) < 3 {
+		return metrics, nil
+	}
 	for _, line := range lines[2:] {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -244,13 +247,18 @@ func (c *SystemCollector) readMemory(m *SystemMetrics) error {
 
 	m.MemTotal = values["MemTotal"]
 	memAvailable := values["MemAvailable"]
-	m.MemUsed = m.MemTotal - memAvailable
+	if m.MemTotal >= memAvailable {
+		m.MemUsed = m.MemTotal - memAvailable
+	}
 	if m.MemTotal > 0 {
 		m.MemPercent = 100.0 * float64(m.MemUsed) / float64(m.MemTotal)
 	}
 
 	m.SwapTotal = values["SwapTotal"]
-	m.SwapUsed = m.SwapTotal - values["SwapFree"]
+	swapFree := values["SwapFree"]
+	if m.SwapTotal >= swapFree {
+		m.SwapUsed = m.SwapTotal - swapFree
+	}
 	return nil
 }
 

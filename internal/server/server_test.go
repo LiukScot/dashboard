@@ -189,6 +189,97 @@ func TestRequestOriginAllowedAllowsSameHostOrigin(t *testing.T) {
 	}
 }
 
+func TestWithAuthRejectsMissingCookie(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "dashboard.sqlite")
+	database, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := db.RunMigrations(database); err != nil {
+		t.Fatalf("migrations: %v", err)
+	}
+
+	srv := &Server{
+		cfg:     &config.Config{SessionTTL: 3600},
+		authSvc: auth.NewService(database, 3600),
+	}
+
+	called := false
+	handler := srv.withAuth(func(w http.ResponseWriter, r *http.Request) { called = true })
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/overview", nil)
+	res := httptest.NewRecorder()
+	handler(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", res.Code)
+	}
+	if called {
+		t.Fatal("inner handler must not run when cookie is missing")
+	}
+}
+
+func TestWithAuthRejectsInvalidSession(t *testing.T) {
+	t.Parallel()
+
+	dbPath := filepath.Join(t.TempDir(), "dashboard.sqlite")
+	database, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	if err := db.RunMigrations(database); err != nil {
+		t.Fatalf("migrations: %v", err)
+	}
+
+	srv := &Server{
+		cfg:     &config.Config{SessionTTL: 3600},
+		authSvc: auth.NewService(database, 3600),
+	}
+
+	called := false
+	handler := srv.withAuth(func(w http.ResponseWriter, r *http.Request) { called = true })
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/overview", nil)
+	req.AddCookie(&http.Cookie{Name: "DASHBOARD_SESSID", Value: "does-not-exist"})
+	res := httptest.NewRecorder()
+	handler(res, req)
+
+	if res.Code != http.StatusUnauthorized {
+		t.Fatalf("expected 401, got %d", res.Code)
+	}
+	if called {
+		t.Fatal("inner handler must not run for invalid session")
+	}
+}
+
+func TestSecurityHeadersSet(t *testing.T) {
+	t.Parallel()
+
+	srv := &Server{cfg: &config.Config{}}
+	wrapped := srv.securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	res := httptest.NewRecorder()
+	wrapped.ServeHTTP(res, req)
+
+	checks := map[string]string{
+		"X-Content-Type-Options": "nosniff",
+		"X-Frame-Options":        "DENY",
+		"Referrer-Policy":        "no-referrer",
+	}
+	for header, want := range checks {
+		if got := res.Header().Get(header); got != want {
+			t.Errorf("header %s = %q, want %q", header, got, want)
+		}
+	}
+}
+
 func TestRequestOriginAllowedRejectsOtherOrigin(t *testing.T) {
 	t.Parallel()
 

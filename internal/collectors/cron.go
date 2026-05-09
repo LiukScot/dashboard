@@ -382,20 +382,21 @@ func parseCronLine(raw string, source string, lineNo int) (CronJob, bool, string
 	return job, true, ""
 }
 
+var cronNicknames = map[string]string{
+	"@yearly":   "0 0 1 1 *",
+	"@annually": "0 0 1 1 *",
+	"@monthly":  "0 0 1 * *",
+	"@weekly":   "0 0 * * 0",
+	"@daily":    "0 0 * * *",
+	"@midnight": "0 0 * * *",
+	"@hourly":   "0 * * * *",
+}
+
 func normalizeScheduleFields(first string) ([]string, string) {
 	if !strings.HasPrefix(first, "@") {
 		return nil, ""
 	}
-	nicknames := map[string]string{
-		"@yearly":   "0 0 1 1 *",
-		"@annually": "0 0 1 1 *",
-		"@monthly":  "0 0 1 * *",
-		"@weekly":   "0 0 * * 0",
-		"@daily":    "0 0 * * *",
-		"@midnight": "0 0 * * *",
-		"@hourly":   "0 * * * *",
-	}
-	if expanded, ok := nicknames[strings.ToLower(first)]; ok {
+	if expanded, ok := cronNicknames[strings.ToLower(first)]; ok {
 		return strings.Fields(expanded), ""
 	}
 	return nil, fmt.Sprintf("unsupported cron nickname %q", first)
@@ -669,6 +670,17 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 	imported := 0
 	var warnings []string
 
+	tx, err := c.db.Begin()
+	if err != nil {
+		return 0, []string{fmt.Sprintf("history tx: %v", err)}
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
 	for _, logFile := range logFiles {
 		file, err := os.Open(logFile)
 		if err != nil {
@@ -687,7 +699,7 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 			if !exists {
 				continue
 			}
-			if err := c.insertHistory(job.Fingerprint, observedAt, "observed", logFile, scanner.Text()); err == nil {
+			if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", logFile, scanner.Text()); err == nil {
 				imported++
 			}
 		}
@@ -696,6 +708,11 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 		}
 		_ = file.Close()
 	}
+
+	if err := tx.Commit(); err != nil {
+		return imported, append(warnings, fmt.Sprintf("history commit: %v", err))
+	}
+	committed = true
 
 	return imported, warnings
 }
@@ -720,10 +737,25 @@ func (c *CronCollector) importJournalHistory(byCommand map[string]CronJob, start
 	cmd := exec.Command("journalctl", args...)
 	output, err := cmd.Output()
 	if err != nil {
-		return 0, []string{fmt.Sprintf("journalctl: %v", err)}, true
+		// journalctl is present but errored (perms, no readable journal,
+		// etc.); signal the caller to fall back to syslog files instead of
+		// silently masking the failure as a successful empty journal.
+		return 0, []string{fmt.Sprintf("journalctl: %v", err)}, false
 	}
 
+	tx, err := c.db.Begin()
+	if err != nil {
+		return 0, []string{fmt.Sprintf("history tx: %v", err)}, true
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			_ = tx.Rollback()
+		}
+	}()
+
 	imported := 0
+	var warnings []string
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
 	for scanner.Scan() {
 		observedAt, user, command, ok := parseCronLogLine(scanner.Text(), end.Add(-time.Second))
@@ -734,15 +766,20 @@ func (c *CronCollector) importJournalHistory(byCommand map[string]CronJob, start
 		if !exists {
 			continue
 		}
-		if err := c.insertHistory(job.Fingerprint, observedAt, "observed", "journalctl", scanner.Text()); err == nil {
+		if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", "journalctl", scanner.Text()); err == nil {
 			imported++
 		}
 	}
 	if err := scanner.Err(); err != nil {
-		return imported, []string{fmt.Sprintf("journalctl scan: %v", err)}, true
+		warnings = append(warnings, fmt.Sprintf("journalctl scan: %v", err))
 	}
 
-	return imported, nil, true
+	if err := tx.Commit(); err != nil {
+		return imported, append(warnings, fmt.Sprintf("history commit: %v", err)), true
+	}
+	committed = true
+
+	return imported, warnings, true
 }
 
 func parseCronLogLine(line string, now time.Time) (time.Time, string, string, bool) {
@@ -784,6 +821,23 @@ func parseCronLogLine(line string, now time.Time) (time.Time, string, string, bo
 
 func (c *CronCollector) insertHistory(jobID string, observedAt time.Time, status string, source string, message string) error {
 	_, err := c.db.Exec(
+		`INSERT OR IGNORE INTO cron_run_history(job_id, scheduled_at, observed_at, status, source, message)
+		 VALUES(?, ?, ?, ?, ?, ?)`,
+		jobID,
+		observedAt.Truncate(time.Minute).Format(time.RFC3339),
+		observedAt.Format(time.RFC3339),
+		status,
+		source,
+		message,
+	)
+	return err
+}
+
+// txInsertHistory is the transactional twin of insertHistory; importers batch
+// thousands of inserts per call, so a single Begin/Commit beats the per-row
+// round trips against the SetMaxOpenConns(1) sqlite pool.
+func txInsertHistory(tx *sql.Tx, jobID string, observedAt time.Time, status string, source string, message string) error {
+	_, err := tx.Exec(
 		`INSERT OR IGNORE INTO cron_run_history(job_id, scheduled_at, observed_at, status, source, message)
 		 VALUES(?, ?, ?, ?, ?, ?)`,
 		jobID,
