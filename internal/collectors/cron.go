@@ -710,7 +710,7 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 	}
 
 	if err := tx.Commit(); err != nil {
-		return imported, append(warnings, fmt.Sprintf("history commit: %v", err))
+		return 0, append(warnings, fmt.Sprintf("history commit: %v", err))
 	}
 	committed = true
 
