@@ -699,7 +699,9 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 			if !exists {
 				continue
 			}
-			if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", logFile, scanner.Text()); err == nil {
+			if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", logFile, scanner.Text()); err != nil {
+				warnings = append(warnings, fmt.Sprintf("insert history %s at %s from %s: %v (line: %q)", job.Fingerprint, observedAt.Format(time.RFC3339), logFile, err, scanner.Text()))
+			} else {
 				imported++
 			}
 		}
@@ -766,7 +768,9 @@ func (c *CronCollector) importJournalHistory(byCommand map[string]CronJob, start
 		if !exists {
 			continue
 		}
-		if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", "journalctl", scanner.Text()); err == nil {
+		if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", "journalctl", scanner.Text()); err != nil {
+			warnings = append(warnings, fmt.Sprintf("insert history %s at %s from journalctl: %v (line: %q)", job.Fingerprint, observedAt.Format(time.RFC3339), err, scanner.Text()))
+		} else {
 			imported++
 		}
 	}
@@ -775,7 +779,7 @@ func (c *CronCollector) importJournalHistory(byCommand map[string]CronJob, start
 	}
 
 	if err := tx.Commit(); err != nil {
-		return imported, append(warnings, fmt.Sprintf("history commit: %v", err)), true
+		return 0, append(warnings, fmt.Sprintf("history commit: %v", err)), true
 	}
 	committed = true
 
