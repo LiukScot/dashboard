@@ -127,6 +127,9 @@ func (f *Fail2BanCollector) GetRecentBans(limit int) ([]BanEvent, error) {
 
 	var events []BanEvent
 	scanner := bufio.NewScanner(file)
+	// Default 64KiB token cap aborts the whole scan on a single long line;
+	// fail2ban traceback dumps can exceed it. Match logs.go.
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 
 	for scanner.Scan() {
 		matches := banLogPattern.FindStringSubmatch(scanner.Text())

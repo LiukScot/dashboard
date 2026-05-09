@@ -178,8 +178,15 @@ func (d *DockerCollector) GetContainerStats(containerID string) (*ContainerStats
 		return nil, fmt.Errorf("decode stats: %w", err)
 	}
 
-	cpuDelta := float64(raw.CPUStats.CPUUsage.TotalUsage - raw.PreCPUStats.CPUUsage.TotalUsage)
-	systemDelta := float64(raw.CPUStats.SystemCPUUsage - raw.PreCPUStats.SystemCPUUsage)
+	// Guard uint64 subtraction; counters can drop on container restart or
+	// stats reset, and wrap-around would surface as nonsense CPU%.
+	var cpuDelta, systemDelta float64
+	if raw.CPUStats.CPUUsage.TotalUsage >= raw.PreCPUStats.CPUUsage.TotalUsage {
+		cpuDelta = float64(raw.CPUStats.CPUUsage.TotalUsage - raw.PreCPUStats.CPUUsage.TotalUsage)
+	}
+	if raw.CPUStats.SystemCPUUsage >= raw.PreCPUStats.SystemCPUUsage {
+		systemDelta = float64(raw.CPUStats.SystemCPUUsage - raw.PreCPUStats.SystemCPUUsage)
+	}
 	cpuPercent := 0.0
 	if systemDelta > 0 && cpuDelta > 0 {
 		cpuPercent = (cpuDelta / systemDelta) * float64(raw.CPUStats.OnlineCPUs) * 100.0

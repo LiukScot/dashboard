@@ -129,7 +129,14 @@ func parseSyslogLine(line string, unitName string) *LogEntry {
 		tsStr := line[:15]
 		t, err := time.Parse("Jan  2 15:04:05", tsStr)
 		if err == nil {
-			t = t.AddDate(time.Now().Year(), 0, 0)
+			now := time.Now()
+			t = time.Date(now.Year(), t.Month(), t.Day(), t.Hour(), t.Minute(), t.Second(), 0, now.Location())
+			// Late-Dec lines parsed in early Jan would be tagged with the
+			// current year and surface as "future" entries; roll the year
+			// back when the parsed timestamp is more than a day ahead.
+			if t.After(now.Add(24 * time.Hour)) {
+				t = t.AddDate(-1, 0, 0)
+			}
 			ts = strconv.FormatInt(t.UnixMicro(), 10)
 			rest = strings.TrimSpace(line[15:])
 		}
@@ -141,8 +148,10 @@ func parseSyslogLine(line string, unitName string) *LogEntry {
 			ts = line[:25]
 			rest = strings.TrimSpace(line[25:])
 		} else {
-			ts = strconv.FormatInt(time.Now().UnixMicro(), 10)
-			rest = line
+			// Unparseable header — drop the line. Synthesizing time.Now()
+			// as a fallback would surface unparseable old log lines as
+			// "newest entries" once the desc sort runs.
+			return nil
 		}
 	}
 

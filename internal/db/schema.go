@@ -41,6 +41,8 @@ var migrations = []string{
 		job_id    TEXT PRIMARY KEY,
 		hidden_at TEXT NOT NULL DEFAULT (datetime('now'))
 	)`,
+	`CREATE INDEX IF NOT EXISTS idx_cron_run_history_scheduled_at
+		ON cron_run_history(scheduled_at)`,
 }
 
-const SchemaVersion = 3
+const SchemaVersion = 4
