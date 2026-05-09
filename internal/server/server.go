@@ -28,6 +28,7 @@ type Server struct {
 	cronColl   *collectors.CronCollector
 	wsHandler  *WSHandler
 	mux        *http.ServeMux
+	startedAt  time.Time
 }
 
 func New(cfg *config.Config, authSvc *auth.Service,
@@ -52,6 +53,7 @@ func New(cfg *config.Config, authSvc *auth.Service,
 		cronColl:   cronColl,
 		wsHandler:  wsHandler,
 		mux:        http.NewServeMux(),
+		startedAt:  time.Now(),
 	}
 
 	s.routes()
@@ -84,6 +86,9 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("POST /api/v1/cron/jobs/{fingerprint}/hide", s.withAuth(s.handleHideCronJob))
 	s.mux.HandleFunc("DELETE /api/v1/cron/hidden", s.withAuth(s.handleResetHiddenCronJobs))
 	s.mux.HandleFunc("GET /api/v1/cron/hidden/count", s.withAuth(s.handleHiddenCronJobCount))
+
+	// Health check (no auth: used by load balancers / external monitors)
+	s.mux.HandleFunc("GET /healthz", s.handleHealth)
 
 	// WebSocket
 	s.mux.HandleFunc("GET /ws", s.wsHandler.HandleUpgrade)
@@ -443,6 +448,15 @@ func (s *Server) handleHiddenCronJobCount(w http.ResponseWriter, r *http.Request
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]int{"count": count})
+}
+
+// --- Health ---
+
+func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "ok",
+		"uptime": int64(time.Since(s.startedAt).Seconds()),
+	})
 }
 
 // --- Static file serving (SPA) ---
