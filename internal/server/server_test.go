@@ -9,6 +9,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/gorilla/websocket"
 
@@ -277,6 +278,34 @@ func TestSecurityHeadersSet(t *testing.T) {
 		if got := res.Header().Get(header); got != want {
 			t.Errorf("header %s = %q, want %q", header, got, want)
 		}
+	}
+}
+
+func TestHandleHealthReturnsStatusAndUptime(t *testing.T) {
+	t.Parallel()
+
+	srv := &Server{startedAt: time.Now().Add(-2 * time.Second)}
+
+	req := httptest.NewRequest(http.MethodGet, "/healthz", nil)
+	res := httptest.NewRecorder()
+	srv.handleHealth(res, req)
+
+	if res.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", res.Code)
+	}
+
+	var body struct {
+		Status string `json:"status"`
+		Uptime int64  `json:"uptime"`
+	}
+	if err := json.NewDecoder(res.Body).Decode(&body); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if body.Status != "ok" {
+		t.Fatalf("status = %q, want ok", body.Status)
+	}
+	if body.Uptime < 1 {
+		t.Fatalf("uptime = %d, want >= 1", body.Uptime)
 	}
 }
 

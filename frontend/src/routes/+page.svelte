@@ -10,6 +10,7 @@
 		type HistorySample
 	} from '$lib/api';
 	import { subscribe, type MetricsMessage } from '$lib/ws';
+	import { toastError } from '$lib/stores/toast.svelte';
 	import GaugeRing from '../components/GaugeRing.svelte';
 	import TimeChart from '../components/TimeChart.svelte';
 	import ContainerTable from '../components/ContainerTable.svelte';
@@ -19,6 +20,7 @@
 	let containers = $state<Container[]>([]);
 	let dockerStats = $state<ContainerStats[]>([]);
 	let dockerError = $state('');
+	let initialLoading = $state(true);
 	type LivePoint = { time: string; cpu: number; mem: number; disk: number; swap: number };
 	let liveHistory = $state<LivePoint[]>([]);
 	let netHistory = $state<{ time: string; rx: number; tx: number }[]>([]);
@@ -111,6 +113,7 @@
 		} catch (err) {
 			historySamples = [];
 			historyError = err instanceof Error ? err.message : 'Failed to load history';
+			toastError(err, 'Failed to load history');
 		} finally {
 			historyLoading = false;
 		}
@@ -136,33 +139,42 @@
 	}
 
 	onMount(async () => {
-		const [sys, hist, netSeed] = await Promise.all([
-			api.systemOverview(),
-			api.cpuHistory(),
-			api.systemHistory('1h').catch(() => [] as HistorySample[])
-		]);
-		system = sys;
-		liveHistory = hist.map((h) => ({
-			time: new Date(h.timestamp).toLocaleTimeString(),
-			cpu: h.cpuPercent,
-			mem: h.memPercent,
-			disk: h.diskPercent,
-			swap: h.swapTotal > 0 ? (h.swapUsed / h.swapTotal) * 100 : 0
-		}));
-		// Seed live network buffer from persisted history so chart isn't empty on reload.
-		netHistory = netSeed.slice(-60).map((s) => ({
-			time: new Date(s.timestamp * 1000).toLocaleTimeString(),
-			rx: s.netRxRate / 1024,
-			tx: s.netTxRate / 1024
-		}));
+		try {
+			const [sys, hist, netSeed] = await Promise.all([
+				api.systemOverview(),
+				api.cpuHistory(),
+				api.systemHistory('1h').catch((err) => {
+					// network history is non-critical: chart can render without seed
+					toastError(err, 'Failed to seed network history');
+					return [] as HistorySample[];
+				})
+			]);
+			system = sys;
+			liveHistory = hist.map((h) => ({
+				time: new Date(h.timestamp).toLocaleTimeString(),
+				cpu: h.cpuPercent,
+				mem: h.memPercent,
+				disk: h.diskPercent,
+				swap: h.swapTotal > 0 ? (h.swapUsed / h.swapTotal) * 100 : 0
+			}));
+			netHistory = netSeed.slice(-60).map((s) => ({
+				time: new Date(s.timestamp * 1000).toLocaleTimeString(),
+				rx: s.netRxRate / 1024,
+				tx: s.netTxRate / 1024
+			}));
+		} catch (err) {
+			toastError(err, 'Failed to load system overview');
+		} finally {
+			initialLoading = false;
+		}
 
 		try {
 			containers = await api.dockerContainers();
 			dockerError = '';
 		} catch (err) {
 			containers = [];
-
 			dockerError = err instanceof Error ? err.message : 'Failed to load containers';
+			toastError(err, 'Failed to load Docker containers');
 		}
 
 		// WebSocket for live updates
@@ -222,6 +234,11 @@
 </script>
 
 <div class="space-y-6">
+	{#if initialLoading}
+		<div class="flex items-center justify-center py-16">
+			<div class="h-6 w-6 animate-spin rounded-full border-2 border-accent border-t-transparent" role="status" aria-label="Loading overview"></div>
+		</div>
+	{:else}
 	<!-- Header -->
 	<div class="flex items-center justify-between">
 		<div>
@@ -335,4 +352,5 @@
 		{/if}
 		<ContainerTable {containers} stats={dockerStats} />
 	</div>
+	{/if}
 </div>
