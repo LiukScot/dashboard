@@ -101,7 +101,9 @@
 			}}
 		>
 			<h1 class="text-xl font-semibold mb-6 text-center">Dashboard</h1>
+			<label for="login-email" class="sr-only">Email</label>
 			<input
+				id="login-email"
 				name="email"
 				type="email"
 				placeholder="Email"
@@ -110,7 +112,9 @@
 				aria-invalid={loginError ? 'true' : undefined}
 				class="w-full bg-bg border border-border rounded-lg px-4 py-2.5 mb-3 text-sm focus:outline-none focus:border-accent transition-colors"
 			/>
+			<label for="login-password" class="sr-only">Password</label>
 			<input
+				id="login-password"
 				name="password"
 				type="password"
 				placeholder="Password"
