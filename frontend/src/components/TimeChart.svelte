@@ -2,10 +2,24 @@
 	import { onMount } from 'svelte';
 	import { graphic, init, use, type EChartsType } from 'echarts/core';
 	import { LineChart } from 'echarts/charts';
-	import { GridComponent, LegendComponent, TitleComponent, TooltipComponent } from 'echarts/components';
+	import {
+		DataZoomComponent,
+		GridComponent,
+		LegendComponent,
+		TitleComponent,
+		TooltipComponent
+	} from 'echarts/components';
 	import { CanvasRenderer } from 'echarts/renderers';
 
-	use([LineChart, GridComponent, LegendComponent, TitleComponent, TooltipComponent, CanvasRenderer]);
+	use([
+		LineChart,
+		GridComponent,
+		LegendComponent,
+		TitleComponent,
+		TooltipComponent,
+		DataZoomComponent,
+		CanvasRenderer
+	]);
 
 	interface Series {
 		name: string;
@@ -19,11 +33,12 @@
 		series: Series[];
 		yAxisLabel?: string;
 		height?: string;
+		zoomable?: boolean;
 	}
 
 	const fallbackHeight = 250;
 
-	let { title, labels, series, yAxisLabel = '', height = '250px' }: Props = $props();
+	let { title, labels, series, yAxisLabel = '', height = '250px', zoomable = false }: Props = $props();
 	let container: HTMLDivElement | undefined;
 	let chart: EChartsType | null = null;
 	let resizeObserver: ResizeObserver | null = null;
@@ -63,7 +78,7 @@
 				backgroundColor: 'transparent',
 				animation: true,
 				title: {
-					text: title,
+					text: yAxisLabel ? `${title} · ${yAxisLabel}` : title,
 					left: 12,
 					top: 8,
 					textStyle: {
@@ -87,9 +102,33 @@
 				grid: {
 					top: safeSeries.length > 1 ? 48 : 38,
 					right: 18,
-					bottom: 30,
+					bottom: zoomable ? 56 : 30,
 					left: 42
 				},
+				dataZoom: zoomable
+					? [
+							{ type: 'inside', start: 0, end: 100 },
+							{
+								type: 'slider',
+								height: 18,
+								bottom: 8,
+								borderColor: '#1e1e2e',
+								backgroundColor: 'transparent',
+								fillerColor: 'rgba(0, 212, 170, 0.15)',
+								handleStyle: { color: '#00d4aa' },
+								moveHandleStyle: { color: '#00d4aa' },
+								textStyle: { color: '#8888a0', fontSize: 10 },
+								dataBackground: {
+									lineStyle: { color: '#1e1e2e' },
+									areaStyle: { color: '#1e1e2e' }
+								},
+								selectedDataBackground: {
+									lineStyle: { color: '#00d4aa' },
+									areaStyle: { color: 'rgba(0, 212, 170, 0.18)' }
+								}
+							}
+						]
+					: undefined,
 				tooltip: {
 					trigger: 'axis',
 					backgroundColor: '#12121a',
@@ -125,14 +164,8 @@
 				},
 				yAxis: {
 					type: 'value',
-					name: yAxisLabel,
 					max: maxValue,
 					splitNumber: 4,
-					nameTextStyle: {
-						color: '#8888a0',
-						fontSize: 10,
-						padding: [0, 0, 4, 0]
-					},
 					axisLine: {
 						show: false
 					},
@@ -202,6 +235,7 @@
 		yAxisLabel;
 		height;
 		maxValue;
+		zoomable;
 
 		updateChart();
 		chart?.resize();

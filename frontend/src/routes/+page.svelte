@@ -1,6 +1,14 @@
 <script lang="ts">
 	import { onMount, onDestroy } from 'svelte';
-	import { api, type Container, type SystemMetrics, type NetworkMetrics, type ContainerStats } from '$lib/api';
+	import {
+		api,
+		type Container,
+		type SystemMetrics,
+		type NetworkMetrics,
+		type ContainerStats,
+		type HistoryRange,
+		type HistorySample
+	} from '$lib/api';
 	import { subscribe, type MetricsMessage } from '$lib/ws';
 	import GaugeRing from '../components/GaugeRing.svelte';
 	import TimeChart from '../components/TimeChart.svelte';
@@ -11,17 +19,141 @@
 	let containers = $state<Container[]>([]);
 	let dockerStats = $state<ContainerStats[]>([]);
 	let dockerError = $state('');
-	let cpuHistory = $state<{ time: string; value: number }[]>([]);
+	type LivePoint = { time: string; cpu: number; mem: number; disk: number; swap: number };
+	let liveHistory = $state<LivePoint[]>([]);
 	let netHistory = $state<{ time: string; rx: number; tx: number }[]>([]);
+
+	type MetricKey = 'cpu' | 'mem' | 'disk' | 'swap';
+	const metrics: Record<MetricKey, {
+		label: string;
+		color: string;
+		live: (p: LivePoint) => number;
+		hist: (s: HistorySample) => number;
+	}> = {
+		cpu:  { label: 'CPU',  color: '#00d4aa', live: (p) => p.cpu,  hist: (s) => s.cpuPercent },
+		mem:  { label: 'RAM',  color: '#4488ff', live: (p) => p.mem,  hist: (s) => s.memPercent },
+		disk: { label: 'Disk', color: '#ffaa22', live: (p) => p.disk, hist: (s) => s.diskPercent },
+		swap: { label: 'Swap', color: '#ff4466', live: (p) => p.swap, hist: (s) => s.swapPercent }
+	};
+	const metricKeys: MetricKey[] = ['cpu', 'mem', 'disk', 'swap'];
+	let selectedMetric = $state<MetricKey>('cpu');
+
+	function swapPercent(s: SystemMetrics | null): number {
+		if (!s || s.swapTotal <= 0) return 0;
+		return (s.swapUsed / s.swapTotal) * 100;
+	}
+
+	const historyRanges: { value: HistoryRange; label: string }[] = [
+		{ value: '1h', label: '1h' },
+		{ value: '6h', label: '6h' },
+		{ value: '24h', label: '24h' },
+		{ value: '7d', label: '7d' },
+		{ value: '30d', label: '30d' }
+	];
+	let historyRange = $state<HistoryRange>('24h');
+	let historyLive = $state(true);
+	let historySamples = $state<HistorySample[]>([]);
+	let historyError = $state('');
+	let historyLoading = $state(false);
+
+	const metricChartLabels = $derived(
+		historyLive
+			? liveHistory.map((h) => h.time)
+			: historySamples.map((s) => formatHistoryLabel(s.timestamp, historyRange))
+	);
+	const metricChartSeries = $derived.by(() => {
+		const m = metrics[selectedMetric];
+		const data = historyLive
+			? liveHistory.map((p) => Math.round(m.live(p) * 10) / 10)
+			: historySamples.map((s) => Math.round(m.hist(s) * 10) / 10);
+		return [{ name: `${m.label} %`, data, color: m.color }];
+	});
+	const netChartLabels = $derived(
+		historyLive
+			? netHistory.map((h) => h.time)
+			: historySamples.map((s) => formatHistoryLabel(s.timestamp, historyRange))
+	);
+	const netChartSeries = $derived(
+		historyLive
+			? [
+					{
+						name: 'Download',
+						data: netHistory.map((h) => Math.round(h.rx * 10) / 10),
+						color: '#4488ff'
+					},
+					{
+						name: 'Upload',
+						data: netHistory.map((h) => Math.round(h.tx * 10) / 10),
+						color: '#00d4aa'
+					}
+				]
+			: [
+					{
+						name: 'Download',
+						data: historySamples.map((s) => Math.round((s.netRxRate / 1024) * 10) / 10),
+						color: '#4488ff'
+					},
+					{
+						name: 'Upload',
+						data: historySamples.map((s) => Math.round((s.netTxRate / 1024) * 10) / 10),
+						color: '#00d4aa'
+					}
+				]
+	);
 
 	let unsubscribeWs: (() => void) | null = null;
 
+	async function loadHistory(range: HistoryRange) {
+		historyLoading = true;
+		historyError = '';
+		try {
+			historySamples = await api.systemHistory(range);
+		} catch (err) {
+			historySamples = [];
+			historyError = err instanceof Error ? err.message : 'Failed to load history';
+		} finally {
+			historyLoading = false;
+		}
+	}
+
+	function selectRange(r: HistoryRange) {
+		historyRange = r;
+		historyLive = false;
+		void loadHistory(r);
+	}
+
+	function selectLive() {
+		historyLive = true;
+		historyError = '';
+	}
+
+	function formatHistoryLabel(ts: number, range: HistoryRange): string {
+		const d = new Date(ts * 1000);
+		if (range === '1h' || range === '6h' || range === '24h') {
+			return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+		}
+		return d.toLocaleString([], { month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+	}
+
 	onMount(async () => {
-		const [sys, hist] = await Promise.all([api.systemOverview(), api.cpuHistory()]);
+		const [sys, hist, netSeed] = await Promise.all([
+			api.systemOverview(),
+			api.cpuHistory(),
+			api.systemHistory('1h').catch(() => [] as HistorySample[])
+		]);
 		system = sys;
-		cpuHistory = hist.map((h) => ({
+		liveHistory = hist.map((h) => ({
 			time: new Date(h.timestamp).toLocaleTimeString(),
-			value: h.cpuPercent
+			cpu: h.cpuPercent,
+			mem: h.memPercent,
+			disk: h.diskPercent,
+			swap: h.swapTotal > 0 ? (h.swapUsed / h.swapTotal) * 100 : 0
+		}));
+		// Seed live network buffer from persisted history so chart isn't empty on reload.
+		netHistory = netSeed.slice(-60).map((s) => ({
+			time: new Date(s.timestamp * 1000).toLocaleTimeString(),
+			rx: s.netRxRate / 1024,
+			tx: s.netTxRate / 1024
 		}));
 
 		try {
@@ -37,11 +169,15 @@
 		unsubscribeWs = subscribe((msg: MetricsMessage) => {
 			if (msg.system) {
 				system = msg.system;
-				cpuHistory = [
-					...cpuHistory.slice(-119),
+				const s = msg.system;
+				liveHistory = [
+					...liveHistory.slice(-119),
 					{
-						time: new Date(msg.system.timestamp).toLocaleTimeString(),
-						value: msg.system.cpuPercent
+						time: new Date(s.timestamp).toLocaleTimeString(),
+						cpu: s.cpuPercent,
+						mem: s.memPercent,
+						disk: s.diskPercent,
+						swap: s.swapTotal > 0 ? (s.swapUsed / s.swapTotal) * 100 : 0
 					}
 				];
 			}
@@ -101,49 +237,86 @@
 		{/if}
 	</div>
 
-	<!-- Gauges -->
+	<!-- Gauges (clickable: pick metric to drive chart) -->
 	{#if system}
+		{@const sys = system}
+		{@const gauges: { key: MetricKey; value: number; subtitle: string }[] = [
+			{ key: 'cpu',  value: sys.cpuPercent,  subtitle: `${sys.cpuCores} cores • Load ${sys.loadAvg[0].toFixed(2)}` },
+			{ key: 'mem',  value: sys.memPercent,  subtitle: `${formatBytes(sys.memUsed)} / ${formatBytes(sys.memTotal)}` },
+			{ key: 'disk', value: sys.diskPercent, subtitle: `${formatBytes(sys.diskUsed)} / ${formatBytes(sys.diskTotal)}` },
+			{ key: 'swap', value: swapPercent(sys), subtitle: `${formatBytes(sys.swapUsed)} / ${formatBytes(sys.swapTotal)}` }
+		]}
 		<div class="grid grid-cols-2 md:grid-cols-4 gap-4">
-			<div class="bg-bg-card border border-border rounded-xl p-4">
-				<GaugeRing value={system.cpuPercent} label="CPU" color="#00d4aa"
-					subtitle="{system.cpuCores} cores • Load {system.loadAvg[0].toFixed(2)}" />
-			</div>
-			<div class="bg-bg-card border border-border rounded-xl p-4">
-				<GaugeRing value={system.memPercent} label="RAM" color="#4488ff"
-					subtitle="{formatBytes(system.memUsed)} / {formatBytes(system.memTotal)}" />
-			</div>
-			<div class="bg-bg-card border border-border rounded-xl p-4">
-				<GaugeRing value={system.diskPercent} label="Disk" color="#ffaa22"
-					subtitle="{formatBytes(system.diskUsed)} / {formatBytes(system.diskTotal)}" />
-			</div>
-			<div class="bg-bg-card border border-border rounded-xl p-4">
-				<GaugeRing
-					value={system.swapTotal > 0 ? (system.swapUsed / system.swapTotal) * 100 : 0}
-					label="Swap" color="#ff4466"
-					subtitle="{formatBytes(system.swapUsed)} / {formatBytes(system.swapTotal)}" />
-			</div>
+			{#each gauges as g (g.key)}
+				<button
+					type="button"
+					aria-pressed={selectedMetric === g.key}
+					onclick={() => (selectedMetric = g.key)}
+					class="bg-bg-card border rounded-xl p-4 text-left transition-colors cursor-pointer
+						{selectedMetric === g.key
+							? 'border-accent ring-1 ring-accent/40'
+							: 'border-border hover:border-text-dim'}"
+				>
+					<GaugeRing
+						value={g.value}
+						label={metrics[g.key].label}
+						color={metrics[g.key].color}
+						subtitle={g.subtitle}
+					/>
+				</button>
+			{/each}
 		</div>
 	{/if}
+
+	<!-- Range selector -->
+	<div class="flex flex-wrap items-center gap-2 text-sm">
+		<span class="text-text-dim mr-1">Range:</span>
+		<button
+			type="button"
+			class="px-3 py-1 rounded-md border transition-colors {historyLive
+				? 'border-accent text-accent bg-accent/10'
+				: 'border-border text-text-dim hover:text-text hover:border-text-dim'}"
+			onclick={selectLive}
+		>
+			Live
+		</button>
+		{#each historyRanges as r (r.value)}
+			<button
+				type="button"
+				class="px-3 py-1 rounded-md border transition-colors {!historyLive && historyRange === r.value
+					? 'border-accent text-accent bg-accent/10'
+					: 'border-border text-text-dim hover:text-text hover:border-text-dim'}"
+				onclick={() => selectRange(r.value)}
+			>
+				{r.label}
+			</button>
+		{/each}
+		{#if historyLoading}
+			<span class="text-text-dim ml-2">Loading…</span>
+		{/if}
+		{#if historyError}
+			<span class="text-danger ml-2">{historyError}</span>
+		{/if}
+	</div>
 
 	<!-- Charts -->
 	<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
 		<div class="bg-bg-card border border-border rounded-xl p-4">
 			<TimeChart
-				title="CPU Usage"
-				labels={cpuHistory.map((h) => h.time)}
-				series={[{ name: 'CPU %', data: cpuHistory.map((h) => Math.round(h.value * 10) / 10), color: '#00d4aa' }]}
+				title={`${metrics[selectedMetric].label} ${historyLive ? '(live)' : `(${historyRange})`}`}
+				labels={metricChartLabels}
+				series={metricChartSeries}
 				yAxisLabel="%"
+				zoomable={!historyLive}
 			/>
 		</div>
 		<div class="bg-bg-card border border-border rounded-xl p-4">
 			<TimeChart
-				title="Network Bandwidth"
-				labels={netHistory.map((h) => h.time)}
-				series={[
-					{ name: 'Download', data: netHistory.map((h) => Math.round(h.rx * 10) / 10), color: '#4488ff' },
-					{ name: 'Upload', data: netHistory.map((h) => Math.round(h.tx * 10) / 10), color: '#00d4aa' }
-				]}
+				title={historyLive ? 'Network Bandwidth (live)' : `Network Bandwidth (${historyRange})`}
+				labels={netChartLabels}
+				series={netChartSeries}
 				yAxisLabel="KB/s"
+				zoomable={!historyLive}
 			/>
 		</div>
 	</div>

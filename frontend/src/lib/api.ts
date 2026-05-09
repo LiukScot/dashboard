@@ -32,6 +32,8 @@ export const api = {
 
 	systemOverview: () => request<SystemMetrics>('/api/v1/system/overview'),
 	cpuHistory: () => request<SystemMetrics[]>('/api/v1/system/cpu-history'),
+	systemHistory: (range: HistoryRange) =>
+		request<HistorySample[]>(`/api/v1/system/history?range=${range}`),
 	network: () => request<NetworkMetrics[]>('/api/v1/system/network'),
 
 	dockerContainers: () => request<Container[]>('/api/v1/docker/containers'),
@@ -69,6 +71,19 @@ export interface SystemMetrics {
 	diskUsed: number;
 	diskPercent: number;
 	timestamp: string;
+}
+
+export type HistoryRange = '1h' | '6h' | '24h' | '7d' | '30d';
+
+export interface HistorySample {
+	timestamp: number;
+	cpuPercent: number;
+	memPercent: number;
+	diskPercent: number;
+	swapPercent: number;
+	netRxRate: number;
+	netTxRate: number;
+	loadAvg1: number;
 }
 
 export interface NetworkMetrics {

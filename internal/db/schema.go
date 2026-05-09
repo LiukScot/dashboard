@@ -41,6 +41,20 @@ var migrations = []string{
 		job_id    TEXT PRIMARY KEY,
 		hidden_at TEXT NOT NULL DEFAULT (datetime('now'))
 	)`,
+	`CREATE TABLE IF NOT EXISTS metrics_history (
+		timestamp    INTEGER NOT NULL,
+		resolution   TEXT    NOT NULL,
+		cpu_percent  REAL    NOT NULL,
+		mem_percent  REAL    NOT NULL,
+		disk_percent REAL    NOT NULL,
+		swap_percent REAL    NOT NULL,
+		net_rx_rate  REAL    NOT NULL,
+		net_tx_rate  REAL    NOT NULL,
+		load_avg_1   REAL    NOT NULL,
+		PRIMARY KEY (timestamp, resolution)
+	)`,
+	`CREATE INDEX IF NOT EXISTS idx_metrics_history_resolution_ts
+		ON metrics_history(resolution, timestamp)`,
 }
 
-const SchemaVersion = 3
+const SchemaVersion = 4

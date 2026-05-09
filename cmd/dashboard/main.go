@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"log"
+	"time"
 
 	"github.com/LiukScot/dashboard/internal/auth"
 	"github.com/LiukScot/dashboard/internal/collectors"
@@ -25,12 +27,17 @@ func main() {
 
 	authSvc := auth.NewService(database, cfg.SessionTTL)
 	sysColl := collectors.NewSystemCollector(cfg.ProcPath)
+	sysHist := collectors.NewSystemHistory(database, sysColl, time.Duration(cfg.MetricsInterval)*time.Second)
 	dockerColl := collectors.NewDockerCollector(cfg.DockerSocket)
 	f2bColl := collectors.NewFail2BanCollector(cfg.LogPath)
 	logColl := collectors.NewLogCollector(cfg.LogPath)
 	cronColl := collectors.NewCronCollector(database, cfg.CronPaths, cfg.LogPath)
 
-	srv := server.New(cfg, authSvc, sysColl, dockerColl, f2bColl, logColl, cronColl)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	sysHist.Run(ctx)
+
+	srv := server.New(cfg, authSvc, sysColl, sysHist, dockerColl, f2bColl, logColl, cronColl)
 
 	log.Fatal(srv.Start())
 }

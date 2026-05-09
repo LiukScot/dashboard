@@ -16,8 +16,9 @@ type Config struct {
 	CronPaths      []string
 	AllowedOrigins string
 	CookieSecure   bool
-	SessionTTL     int
-	PublicDir      string
+	SessionTTL      int
+	PublicDir       string
+	MetricsInterval int
 }
 
 func Load() *Config {
@@ -32,7 +33,8 @@ func Load() *Config {
 		AllowedOrigins: envOr("ALLOWED_ORIGINS", "http://localhost:4200,http://127.0.0.1:4200,http://localhost:5173,http://127.0.0.1:5173"),
 		CookieSecure:   envOr("COOKIE_SECURE", "false") == "true",
 		SessionTTL:     envInt("SESSION_TTL", 60*60*24*30),
-		PublicDir:      envOr("PUBLIC_DIR", "./frontend/build"),
+		PublicDir:       envOr("PUBLIC_DIR", "./frontend/build"),
+		MetricsInterval: envInt("METRICS_INTERVAL", 60),
 	}
 }
 
