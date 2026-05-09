@@ -63,6 +63,8 @@ func (h *Hub) Broadcast(data []byte) {
 	var failed []*connWithMu
 	for c := range h.clients {
 		c.mu.Lock()
+		// 10s write deadline so a stuck client doesn't pile up goroutines.
+		_ = c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 		err := c.conn.WriteMessage(websocket.TextMessage, data)
 		c.mu.Unlock()
 		if err != nil {
@@ -100,6 +102,11 @@ func NewWSHandler(hub *Hub, authSvc *auth.Service, sysColl *collectors.SystemCol
 	}
 }
 
+// wsMaxMessageBytes caps inbound frame size to prevent a single client from
+// asking us to allocate arbitrarily large buffers (gorilla/websocket reads
+// the whole frame before returning).
+const wsMaxMessageBytes = 1 << 16
+
 func (ws *WSHandler) HandleUpgrade(w http.ResponseWriter, r *http.Request) {
 	_, err := auth.ValidateSessionFromCookie(ws.authSvc, r)
 	if err != nil {
@@ -112,6 +119,8 @@ func (ws *WSHandler) HandleUpgrade(w http.ResponseWriter, r *http.Request) {
 		log.Printf("ws upgrade error: %v", err)
 		return
 	}
+
+	conn.SetReadLimit(wsMaxMessageBytes)
 
 	c := ws.hub.Register(conn)
 	log.Printf("ws client connected (%d total)", ws.hub.ClientCount())

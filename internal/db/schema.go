@@ -41,6 +41,8 @@ var migrations = []string{
 		job_id    TEXT PRIMARY KEY,
 		hidden_at TEXT NOT NULL DEFAULT (datetime('now'))
 	)`,
+	`CREATE INDEX IF NOT EXISTS idx_cron_run_history_scheduled_at
+		ON cron_run_history(scheduled_at)`,
 	`CREATE TABLE IF NOT EXISTS metrics_history (
 		timestamp    INTEGER NOT NULL,
 		resolution   TEXT    NOT NULL,
@@ -57,4 +59,4 @@ var migrations = []string{
 		ON metrics_history(resolution, timestamp)`,
 }
 
-const SchemaVersion = 4
+const SchemaVersion = 5
