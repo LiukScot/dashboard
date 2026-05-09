@@ -17,6 +17,22 @@
 	let mobileNavOpen = $state(false);
 	let wsState = $state<WsState>('disconnected');
 	let unsubscribeWs: (() => void) | null = null;
+	let hamburgerBtn: HTMLButtonElement | null = $state(null);
+	let mobileNav: HTMLElement | null = $state(null);
+
+	$effect(() => {
+		if (!mobileNavOpen) return;
+		// Move focus into the drawer so keyboard / screen-reader users can
+		// navigate it without first tabbing through the rest of the page.
+		const target = mobileNav?.querySelector<HTMLElement>('a, button');
+		target?.focus();
+	});
+
+	function handleNavKey(e: KeyboardEvent) {
+		if (e.key === 'Escape' && mobileNavOpen) {
+			closeMobileNav();
+		}
+	}
 
 	onMount(async () => {
 		const session = await api.session();
@@ -36,6 +52,7 @@
 
 	function closeMobileNav() {
 		mobileNavOpen = false;
+		hamburgerBtn?.focus();
 	}
 
 	const navItems = [
@@ -56,6 +73,8 @@
 		disconnected: 'bg-danger'
 	};
 </script>
+
+<svelte:window onkeydown={handleNavKey} />
 
 {#if loading}
 	<div class="h-screen flex items-center justify-center">
@@ -127,6 +146,9 @@
 			></button>
 		{/if}
 		<nav
+			bind:this={mobileNav}
+			id="primary-nav"
+			aria-label="Primary"
 			class="fixed inset-y-0 left-0 z-40 w-56 bg-bg-card border-r border-border flex flex-col shrink-0 transform transition-transform duration-200
 				md:static md:translate-x-0
 				{mobileNavOpen ? 'translate-x-0' : '-translate-x-full'}"
@@ -174,10 +196,12 @@
 		<main class="flex-1 overflow-y-auto">
 			<header class="md:hidden sticky top-0 z-20 flex items-center justify-between gap-3 border-b border-border bg-bg-card px-4 py-3">
 				<button
+					bind:this={hamburgerBtn}
 					type="button"
 					class="text-text hover:text-accent cursor-pointer"
 					aria-label="Open navigation"
 					aria-expanded={mobileNavOpen}
+					aria-controls="primary-nav"
 					onclick={() => (mobileNavOpen = true)}
 				>
 					<svg class="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">

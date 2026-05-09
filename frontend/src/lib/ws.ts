@@ -58,8 +58,10 @@ function tryConnect() {
 			for (const listener of listeners) {
 				listener(msg);
 			}
-		} catch {
-			// ignore parse errors: server should never send invalid JSON
+		} catch (err) {
+			// Server protocol violation. Log so deploy schema drift / partial
+			// frames don't surface as silent stale charts.
+			console.error('ws: failed to parse metrics frame', err, event.data);
 		}
 	};
 
