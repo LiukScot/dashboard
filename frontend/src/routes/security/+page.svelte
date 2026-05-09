@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { onMount } from 'svelte';
 	import { api, type Fail2BanStatus, type BanEvent, type LogEntry } from '$lib/api';
+	import { toastError } from '$lib/stores/toast.svelte';
 
 	let f2bStatus = $state<Fail2BanStatus | null>(null);
 	let banEvents = $state<BanEvent[]>([]);
@@ -16,9 +17,18 @@
 
 	async function refresh() {
 		const [status, bans, logEntries] = await Promise.all([
-			api.fail2ban().catch(() => null),
-			api.fail2banBans().catch(() => []),
-			api.logs(logUnit, logPriority).catch(() => [])
+			api.fail2ban().catch((err) => {
+				toastError(err, 'Failed to load fail2ban status');
+				return null;
+			}),
+			api.fail2banBans().catch((err) => {
+				toastError(err, 'Failed to load ban events');
+				return [] as BanEvent[];
+			}),
+			api.logs(logUnit, logPriority).catch((err) => {
+				toastError(err, 'Failed to load logs');
+				return [] as LogEntry[];
+			})
 		]);
 		f2bStatus = status;
 		banEvents = bans;
@@ -26,7 +36,12 @@
 	}
 
 	async function filterLogs() {
-		logs = await api.logs(logUnit, logPriority).catch(() => []);
+		try {
+			logs = await api.logs(logUnit, logPriority);
+		} catch (err) {
+			logs = [];
+			toastError(err, 'Failed to filter logs');
+		}
 	}
 
 	function formatTimestamp(ts: string): string {
