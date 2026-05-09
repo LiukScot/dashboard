@@ -7,15 +7,36 @@ export interface MetricsMessage {
 	docker?: ContainerStats[];
 }
 
+export type WsState = 'connecting' | 'connected' | 'disconnected';
+
 type Listener = (msg: MetricsMessage) => void;
+type StateListener = (state: WsState) => void;
 
 let socket: WebSocket | null = null;
-let listeners: Set<Listener> = new Set();
+const listeners: Set<Listener> = new Set();
+const stateListeners: Set<StateListener> = new Set();
 let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+let attempt = 0;
+let currentState: WsState = 'disconnected';
+
+const BASE_DELAY_MS = 1000;
+const MAX_DELAY_MS = 30000;
 
 function getWsUrl(): string {
 	const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
 	return `${proto}//${location.host}/ws`;
+}
+
+function setState(next: WsState): void {
+	if (currentState === next) return;
+	currentState = next;
+	for (const l of stateListeners) l(next);
+}
+
+function backoffDelay(): number {
+	// 1s, 2s, 4s, 8s, 16s, 30s (cap)
+	const exp = Math.min(BASE_DELAY_MS * 2 ** attempt, MAX_DELAY_MS);
+	return exp;
 }
 
 function tryConnect() {
@@ -23,7 +44,13 @@ function tryConnect() {
 		return;
 	}
 
+	setState('connecting');
 	socket = new WebSocket(getWsUrl());
+
+	socket.onopen = () => {
+		attempt = 0;
+		setState('connected');
+	};
 
 	socket.onmessage = (event) => {
 		try {
@@ -32,15 +59,18 @@ function tryConnect() {
 				listener(msg);
 			}
 		} catch {
-			// ignore parse errors
+			// ignore parse errors: server should never send invalid JSON
 		}
 	};
 
 	socket.onclose = () => {
 		socket = null;
-		if (listeners.size > 0) {
-			reconnectTimer = setTimeout(tryConnect, 3000);
-		}
+		setState('disconnected');
+		if (listeners.size === 0) return;
+
+		const delay = backoffDelay();
+		attempt += 1;
+		reconnectTimer = setTimeout(tryConnect, delay);
 	};
 
 	socket.onerror = () => {
@@ -56,8 +86,21 @@ export function subscribe(listener: Listener): () => void {
 		listeners.delete(listener);
 		if (listeners.size === 0) {
 			if (reconnectTimer) clearTimeout(reconnectTimer);
+			reconnectTimer = null;
+			attempt = 0;
 			socket?.close();
 			socket = null;
+			setState('disconnected');
 		}
 	};
+}
+
+export function subscribeState(listener: StateListener): () => void {
+	stateListeners.add(listener);
+	listener(currentState);
+	return () => stateListeners.delete(listener);
+}
+
+export function getState(): WsState {
+	return currentState;
 }
