@@ -104,7 +104,7 @@ func (s *Server) Start() error {
 		Handler:           s.securityHeaders(s.corsMiddleware(s.mux)),
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
-		WriteTimeout:      0, // 0 because /ws upgrades to a long-lived stream
+		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
 	return srv.ListenAndServe()
