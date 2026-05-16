@@ -32,15 +32,15 @@ test('login then logout flow', async ({ page }) => {
 	await page.getByRole('button', { name: 'Sign out' }).click();
 
 	// Login form re-appears.
-	await expect(page.getByPlaceholder('Email')).toBeVisible();
+	await expect(page.getByLabel("Email")).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible();
 });
 
 test('login rejects wrong password', async ({ page }) => {
 	await page.context().clearCookies();
 	await page.goto('/');
-	await page.getByPlaceholder('Email').fill(e2eUser.email);
-	await page.getByPlaceholder('Password').fill('not-the-password');
+	await page.getByLabel("Email").fill(e2eUser.email);
+	await page.getByLabel("Password").fill('not-the-password');
 	await page.getByRole('button', { name: 'Sign in' }).click();
 
 	// Inline error (role=alert) surfaces invalid credentials.
