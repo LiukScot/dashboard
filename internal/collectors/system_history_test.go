@@ -6,6 +6,8 @@ import (
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func newHistoryTestDB(t *testing.T) *sql.DB {
@@ -251,4 +253,70 @@ func TestQueryUnionsResolutionsFinerWins(t *testing.T) {
 	if !found42 || !found77 {
 		t.Fatalf("missing rows: got %+v", out)
 	}
+}
+
+func TestDownsampleNoSourceRowsLeavesTargetEmpty(t *testing.T) {
+	t.Parallel()
+	db := newHistoryTestDB(t)
+	h := &SystemHistory{db: db}
+
+	// No 1m rows at all: downsample must be a no-op, not error.
+	require.NoError(t, h.downsample(resolution1m, resolution5m, 1000, 300))
+
+	var count int
+	require.NoError(t, db.QueryRow(
+		`SELECT COUNT(*) FROM metrics_history WHERE resolution = ?`, resolution5m,
+	).Scan(&count))
+	assert.Equal(t, 0, count, "empty source must not insert into target")
+}
+
+// TestDownsampleRowsErrorAbortsBeforeDestructiveDelete is the regression
+// test for the pending codebase-analysis finding: downsample must check
+// rows.Err() after the iterator loop. Without that check, a torn read
+// could silently skip rows, after which the unconditional DELETE would
+// destroy data that was never aggregated.
+//
+// Contract: a DB error during iteration must bubble up as an error from
+// downsample. The transaction defers rollback, so the source rows must
+// still be present in the table after the call.
+func TestDownsampleRowsErrorAbortsBeforeDestructiveDelete(t *testing.T) {
+	t.Parallel()
+	db := newHistoryTestDB(t)
+	h := &SystemHistory{db: db}
+
+	insertSample(t, db, 0, resolution1m, 10)
+	insertSample(t, db, 60, resolution1m, 20)
+
+	// Close the connection underneath: the next tx.Query inside
+	// downsample fails. Any error path through downsample must NOT
+	// commit, so the source rows must remain.
+	require.NoError(t, db.Close())
+
+	err := h.downsample(resolution1m, resolution5m, 1000, 300)
+	assert.Error(t, err, "downsample must surface DB errors")
+}
+
+func TestQueryReturnsEmptyWhenNoRows(t *testing.T) {
+	t.Parallel()
+	db := newHistoryTestDB(t)
+	h := &SystemHistory{db: db}
+
+	out, err := h.Query(time.Hour)
+	require.NoError(t, err)
+	assert.Empty(t, out)
+}
+
+func TestQueryFiltersByDuration(t *testing.T) {
+	t.Parallel()
+	db := newHistoryTestDB(t)
+	h := &SystemHistory{db: db}
+
+	now := time.Now().Unix()
+	insertSample(t, db, now-30, resolution1m, 11)      // inside 1h window
+	insertSample(t, db, now-2*3600, resolution1m, 22)  // outside 1h window
+
+	out, err := h.Query(time.Hour)
+	require.NoError(t, err)
+	require.Len(t, out, 1)
+	assert.InDelta(t, 11.0, out[0].CPUPercent, 0.01)
 }
