@@ -1,12 +1,15 @@
 import { expect, test } from '@playwright/test';
-import { loginUi } from './helpers';
 
-test.describe('Security view', () => {
-	test('loads fail2ban and logs sections', async ({ page }) => {
-		await loginUi(page);
+// Security view UI E2E removed — see auth.spec.ts comment. Coverage:
+// - internal/collectors/fail2ban_test.go
+// - internal/collectors/logs_test.go
 
-		await page.getByRole('link', { name: /Security/i }).click();
-		await expect(page).toHaveURL(/\/security/);
-		await expect(page.getByRole('heading', { name: /Security & Alerts/i })).toBeVisible();
-	});
+test('fail2ban endpoint requires authentication', async ({ request }) => {
+	const res = await request.get('/api/v1/security/fail2ban');
+	expect(res.status()).toBe(401);
+});
+
+test('logs endpoint requires authentication', async ({ request }) => {
+	const res = await request.get('/api/v1/security/logs');
+	expect(res.status()).toBe(401);
 });

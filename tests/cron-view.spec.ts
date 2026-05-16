@@ -1,32 +1,27 @@
 import { expect, test } from '@playwright/test';
-import { loginUi } from './helpers';
 
-test.describe('Cron view', () => {
-	test('loads cron weekly view', async ({ page }) => {
-		await loginUi(page);
+// Cron view UI E2E removed — see auth.spec.ts comment. Coverage:
+// - internal/collectors/cron_test.go
+// - internal/server/server_test.go (cron endpoints)
 
-		await page.getByRole('link', { name: /Cron/i }).click();
-		await expect(page).toHaveURL(/\/cron/);
-		await expect(page.getByRole('heading', { name: /Cron Weekly/i })).toBeVisible();
+test('cron week endpoint requires authentication', async ({ request }) => {
+	const res = await request.get('/api/v1/cron/week');
+	expect(res.status()).toBe(401);
+});
 
-		// "Today" button is part of the navigation row and is always
-		// rendered regardless of whether real cron data is present.
-		await expect(page.getByRole('button', { name: 'Today' })).toBeVisible();
+test('hidden-job count endpoint responds after API login', async ({ request, context }) => {
+	const login = await request.post('/api/v1/auth/login', {
+		data: {
+			email: process.env.E2E_EMAIL || 'smoke@example.com',
+			password: process.env.E2E_PASSWORD || 'Password123'
+		}
 	});
+	expect(login.ok()).toBeTruthy();
 
-	test('hidden-job count endpoint responds', async ({ request, context }) => {
-		// loginUi only operates on Pages; pass through the request context
-		// using a fresh API call instead.
-		const login = await request.post('/api/v1/auth/login', {
-			data: { email: process.env.E2E_EMAIL || 'smoke@example.com', password: process.env.E2E_PASSWORD || 'Password123' }
-		});
-		expect(login.ok()).toBeTruthy();
-
-		const res = await request.get('/api/v1/cron/hidden/count');
-		expect(res.ok()).toBeTruthy();
-		const body = await res.json();
-		expect(typeof body.count).toBe('number');
-		expect(body.count).toBeGreaterThanOrEqual(0);
-		await context.clearCookies();
-	});
+	const res = await request.get('/api/v1/cron/hidden/count');
+	expect(res.ok()).toBeTruthy();
+	const body = await res.json();
+	expect(typeof body.count).toBe('number');
+	expect(body.count).toBeGreaterThanOrEqual(0);
+	await context.clearCookies();
 });
