@@ -1,0 +1,58 @@
+name: Dependabot lockfile sync
+
+# Dependabot updates package.json but not bun.lock, so the two drift apart.
+# Any future `bun install --frozen-lockfile` would fail, and AGENTS rule 6
+# requires lockfiles to stay committed. This job regenerates the lockfile
+# on dependabot PRs and pushes the change back to the PR branch.
+#
+# Security note: github.head_ref is consumed only inside the checkout action
+# `with:` block (safe context), never interpolated into a shell `run:` step.
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dependabot-lockfile-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  sync-lockfile:
+    if: github.actor == 'dependabot[bot]'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout PR branch
+        uses: actions/checkout@v6
+        with:
+          ref: ${{ github.head_ref }}
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: latest
+
+      - name: Refresh root lockfile
+        run: bun install --no-frozen-lockfile
+
+      - name: Refresh frontend lockfile
+        working-directory: frontend
+        run: bun install --no-frozen-lockfile
+
+      - name: Commit and push lockfile changes
+        run: |
+          if [[ -z "$(git status --porcelain bun.lock frontend/bun.lock)" ]]; then
+            echo "Lockfiles already in sync, nothing to commit."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add bun.lock frontend/bun.lock
+          git commit -m "chore: sync bun.lock after dependabot bump"
+          git push
