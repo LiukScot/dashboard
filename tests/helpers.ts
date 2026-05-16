@@ -8,8 +8,8 @@ export const e2eUser = {
 export async function loginUi(page: Page, password = e2eUser.password) {
 	await page.context().clearCookies();
 	await page.goto('/');
-	await page.getByPlaceholder('Email').fill(e2eUser.email);
-	await page.getByPlaceholder('Password').fill(password);
+	await page.getByLabel('Email').fill(e2eUser.email);
+	await page.getByLabel('Password').fill(password);
 	// Wait for the POST to land so the cookie is set and the layout can
 	// observe the new session state on its next tick.
 	await Promise.all([
