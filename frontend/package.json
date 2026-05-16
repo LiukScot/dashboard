@@ -6,9 +6,9 @@
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",
-    "test": "vitest run",
-    "test:watch": "vitest",
-    "test:coverage": "vitest run --coverage"
+    "test": "svelte-kit sync && vitest run",
+    "test:watch": "svelte-kit sync && vitest",
+    "test:coverage": "svelte-kit sync && vitest run --coverage"
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.0",
