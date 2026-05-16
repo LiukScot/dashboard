@@ -8,6 +8,9 @@ export const e2eUser = {
 export async function loginUi(page: Page, password = e2eUser.password) {
 	await page.context().clearCookies();
 	await page.goto('/');
+	// Layout renders spinner while api.session() resolves; wait for the
+	// login form to mount before interacting with its inputs.
+	await expect(page.getByRole('button', { name: 'Sign in' })).toBeVisible({ timeout: 30_000 });
 	await page.getByLabel('Email').fill(e2eUser.email);
 	await page.getByLabel('Password').fill(password);
 	// Wait for the POST to land so the cookie is set and the layout can
