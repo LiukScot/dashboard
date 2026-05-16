@@ -29,6 +29,12 @@ services:
       - /var/log/journal:/var/log/journal:ro
       - /var/log:/host/log:ro
       - /var/run/fail2ban:/var/run/fail2ban:ro
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:4200/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
     restart: unless-stopped
     develop:
       watch:

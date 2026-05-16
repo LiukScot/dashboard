@@ -102,8 +102,12 @@ func (s *Server) Start() error {
 	s.wsHandler.StartBroadcastLoop(3 * time.Second)
 
 	// Initial collection to populate data
-	s.sysColl.Collect()
-	s.sysColl.CollectNetwork()
+	if _, err := s.sysColl.Collect(); err != nil {
+		log.Printf("initial system collect error: %v", err)
+	}
+	if _, err := s.sysColl.CollectNetwork(); err != nil {
+		log.Printf("initial network collect error: %v", err)
+	}
 
 	addr := fmt.Sprintf("%s:%d", s.cfg.Host, s.cfg.Port)
 	log.Printf("dashboard listening on %s", addr)
@@ -120,14 +124,17 @@ func (s *Server) Start() error {
 }
 
 // securityHeaders sets baseline response headers that harden the SPA + cookie
-// session against XSS-driven clickjacking and MIME sniffing. CSP is left out
-// because the SPA bundle still inlines styles via Tailwind; add when fixed.
+// session against clickjacking, MIME sniffing, and XSS.
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := w.Header()
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
+		// Allow inline styles (Tailwind) while blocking cross-origin scripts.
+		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'")
+		// Tell browsers to only use HTTPS for this origin for 1 year.
+		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		next.ServeHTTP(w, r)
 	})
 }
@@ -157,7 +164,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 // Auth wrapper — validates session and injects user into request context
 func (s *Server) withAuth(handler http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		cookie, err := r.Cookie("DASHBOARD_SESSID")
+		cookie, err := r.Cookie(auth.SessionCookieName)
 		if err != nil {
 			writeJSON(w, http.StatusUnauthorized, map[string]string{"error": "unauthorized"})
 			return
@@ -194,7 +201,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     "DASHBOARD_SESSID",
+		Name:     auth.SessionCookieName,
 		Value:    sid,
 		Path:     "/",
 		HttpOnly: true,
@@ -207,13 +214,15 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
-	cookie, err := r.Cookie("DASHBOARD_SESSID")
+	cookie, err := r.Cookie(auth.SessionCookieName)
 	if err == nil {
-		s.authSvc.Logout(cookie.Value)
+		if logoutErr := s.authSvc.Logout(cookie.Value); logoutErr != nil {
+			log.Printf("logout session error: %v", logoutErr)
+		}
 	}
 
 	http.SetCookie(w, &http.Cookie{
-		Name:     "DASHBOARD_SESSID",
+		Name:     auth.SessionCookieName,
 		Value:    "",
 		Path:     "/",
 		HttpOnly: true,
@@ -228,7 +237,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	response := map[string]any{"authenticated": false}
 
-	cookie, err := r.Cookie("DASHBOARD_SESSID")
+	cookie, err := r.Cookie(auth.SessionCookieName)
 	if err != nil {
 		writeJSON(w, http.StatusOK, response)
 		return
@@ -509,7 +518,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-func writeJSON(w http.ResponseWriter, status int, data interface{}) {
+func writeJSON(w http.ResponseWriter, status int, data any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	if err := json.NewEncoder(w).Encode(data); err != nil {

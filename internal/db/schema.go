@@ -57,6 +57,10 @@ var migrations = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_metrics_history_resolution_ts
 		ON metrics_history(resolution, timestamp)`,
+	`CREATE INDEX IF NOT EXISTS idx_sessions_user_id
+		ON sessions(user_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_cron_run_history_job_id
+		ON cron_run_history(job_id)`,
 }
 
-const SchemaVersion = 5
+const SchemaVersion = 7

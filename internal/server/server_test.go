@@ -245,7 +245,7 @@ func TestWithAuthRejectsInvalidSession(t *testing.T) {
 	handler := srv.withAuth(func(w http.ResponseWriter, r *http.Request) { called = true })
 
 	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/overview", nil)
-	req.AddCookie(&http.Cookie{Name: "DASHBOARD_SESSID", Value: "does-not-exist"})
+	req.AddCookie(&http.Cookie{Name: auth.SessionCookieName, Value: "does-not-exist"})
 	res := httptest.NewRecorder()
 	handler(res, req)
 

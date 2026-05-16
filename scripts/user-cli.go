@@ -59,7 +59,10 @@ func main() {
 		for rows.Next() {
 			var id int64
 			var email, createdAt string
-			rows.Scan(&id, &email, &createdAt)
+			if err := rows.Scan(&id, &email, &createdAt); err != nil {
+				log.Printf("scan user row: %v", err)
+				continue
+			}
 			fmt.Printf("%-4d %-30s %s\n", id, email, createdAt)
 		}
 
