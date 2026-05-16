@@ -66,9 +66,30 @@ jobs:
       - name: Build frontend
         run: bun run build
 
-  app-run:
+  component-frontend:
+    name: Component (frontend vitest)
     runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: frontend
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
 
+      - name: Set up Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Run vitest
+        run: bun run test
+
+  e2e:
+    name: E2E (Playwright)
+    runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -84,44 +105,20 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Install frontend dependencies
-        working-directory: frontend
+      - name: Install root deps
         run: bun install
 
       - name: Build frontend
-        working-directory: frontend
-        run: bun run build
+        run: bun run smoke:build:fe
 
-      - name: Start dashboard
-        env:
-          HOST: 127.0.0.1
-          PORT: 4200
-          DB_PATH: ${{ runner.temp }}/dashboard.sqlite
-          PUBLIC_DIR: ${{ github.workspace }}/frontend/build
-        run: |
-          go run ./cmd/dashboard >"$RUNNER_TEMP/dashboard.log" 2>&1 &
-          echo $! >"$RUNNER_TEMP/dashboard.pid"
+      - name: Build Go binary
+        run: bun run smoke:build:go
 
-      - name: Smoke test app
-        run: |
-          for _ in $(seq 1 30); do
-            if curl --fail --silent http://127.0.0.1:4200/api/v1/auth/session >/tmp/session.json; then
-              break
-            fi
-            sleep 1
-          done
+      - name: Install Playwright browsers
+        run: bunx playwright install --with-deps chromium
 
-          curl --fail --show-error --silent http://127.0.0.1:4200/ >/tmp/index.html
-          grep -q '"authenticated":false' /tmp/session.json
-          grep -q '<!doctype html>' /tmp/index.html
-
-      - name: Show app log on failure
-        if: failure()
-        run: cat "$RUNNER_TEMP/dashboard.log"
-
-      - name: Stop dashboard
-        if: always()
-        run: kill "$(cat "$RUNNER_TEMP/dashboard.pid")" || true
+      - name: Run Playwright tests
+        run: bunx playwright test
 
   docker-build:
     runs-on: ubuntu-latest
