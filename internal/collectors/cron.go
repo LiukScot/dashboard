@@ -2,7 +2,7 @@ package collectors
 
 import (
 	"bufio"
-	"crypto/sha1"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/hex"
 	"fmt"
@@ -425,7 +425,7 @@ func cronSourceUser(source string) string {
 }
 
 func fingerprint(parts ...string) string {
-	sum := sha1.Sum([]byte(strings.Join(parts, "\x00")))
+	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
 	return hex.EncodeToString(sum[:])[:16]
 }
 
@@ -823,21 +823,7 @@ func parseCronLogLine(line string, now time.Time) (time.Time, string, string, bo
 	return when, user, command, true
 }
 
-func (c *CronCollector) insertHistory(jobID string, observedAt time.Time, status string, source string, message string) error {
-	_, err := c.db.Exec(
-		`INSERT OR IGNORE INTO cron_run_history(job_id, scheduled_at, observed_at, status, source, message)
-		 VALUES(?, ?, ?, ?, ?, ?)`,
-		jobID,
-		observedAt.Truncate(time.Minute).Format(time.RFC3339),
-		observedAt.Format(time.RFC3339),
-		status,
-		source,
-		message,
-	)
-	return err
-}
-
-// txInsertHistory is the transactional twin of insertHistory; importers batch
+// txInsertHistory batches
 // thousands of inserts per call, so a single Begin/Commit beats the per-row
 // round trips against the SetMaxOpenConns(1) sqlite pool.
 func txInsertHistory(tx *sql.Tx, jobID string, observedAt time.Time, status string, source string, message string) error {

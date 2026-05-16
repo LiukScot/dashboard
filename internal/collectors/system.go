@@ -207,7 +207,7 @@ func (c *SystemCollector) readCPU(m *SystemMetrics) error {
 			}
 
 			c.mu.Lock()
-			if c.prevCPUTotal > 0 {
+			if c.prevCPUTotal > 0 && total >= c.prevCPUTotal && idle >= c.prevCPUIdle {
 				dTotal := total - c.prevCPUTotal
 				dIdle := idle - c.prevCPUIdle
 				if dTotal > 0 {

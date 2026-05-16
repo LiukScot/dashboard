@@ -7,7 +7,10 @@ import (
 
 type contextKey string
 
-const userContextKey contextKey = "user"
+const (
+	userContextKey  contextKey = "user"
+	SessionCookieName          = "DASHBOARD_SESSID"
+)
 
 // WithUser stores a User in the request context.
 func WithUser(ctx context.Context, user *User) context.Context {
@@ -22,7 +25,7 @@ func UserFromContext(ctx context.Context) *User {
 
 // ValidateSessionFromCookie checks a session from raw cookie header (for WebSocket upgrades)
 func ValidateSessionFromCookie(authSvc *Service, r *http.Request) (*User, error) {
-	cookie, err := r.Cookie("DASHBOARD_SESSID")
+	cookie, err := r.Cookie(SessionCookieName)
 	if err != nil {
 		return nil, ErrSessionNotFound
 	}

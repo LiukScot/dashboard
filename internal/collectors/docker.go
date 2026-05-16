@@ -11,6 +11,8 @@ import (
 	"time"
 )
 
+const dockerAPIVersion = "v1.43"
+
 type Container struct {
 	ID      string            `json:"id"`
 	Name    string            `json:"name"`
@@ -60,7 +62,7 @@ func NewDockerCollector(socketPath string) *DockerCollector {
 }
 
 func (d *DockerCollector) ListContainers() ([]Container, error) {
-	resp, err := d.client.Get("http://docker/v1.43/containers/json?all=true")
+	resp, err := d.client.Get("http://docker/" + dockerAPIVersion + "/containers/json?all=true")
 	if err != nil {
 		return nil, fmt.Errorf("docker list: %w", err)
 	}
@@ -135,7 +137,7 @@ func (d *DockerCollector) ListContainers() ([]Container, error) {
 }
 
 func (d *DockerCollector) GetContainerStats(containerID string) (*ContainerStats, error) {
-	resp, err := d.client.Get(fmt.Sprintf("http://docker/v1.43/containers/%s/stats?stream=false", containerID))
+	resp, err := d.client.Get(fmt.Sprintf("http://docker/" + dockerAPIVersion + "/containers/%s/stats?stream=false", containerID))
 	if err != nil {
 		return nil, fmt.Errorf("docker stats %s: %w", containerID, err)
 	}

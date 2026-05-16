@@ -178,6 +178,9 @@ func (h *SystemHistory) downsample(srcRes, dstRes string, cutoff, bucketSec int6
 		buckets = append(buckets, b)
 	}
 	rows.Close()
+	if err := rows.Err(); err != nil {
+		return err
+	}
 
 	for _, b := range buckets {
 		if _, err := tx.Exec(
