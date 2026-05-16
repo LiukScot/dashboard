@@ -1,0 +1,16 @@
+{
+  "name": "dashboard-e2e",
+  "version": "0.0.1",
+  "private": true,
+  "scripts": {
+    "smoke:build:fe": "cd frontend && bun install --frozen-lockfile && bun run build",
+    "smoke:build:go": "go build -o dashboard-smoke ./cmd/dashboard && go build -o user-cli-smoke ./scripts/user-cli.go",
+    "smoke:seed": "node ./tests/seed.mjs",
+    "smoke:serve": "./dashboard-smoke",
+    "test:e2e": "playwright test",
+    "test:e2e:headed": "playwright test --headed"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0"
+  }
+}

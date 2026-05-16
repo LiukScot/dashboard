@@ -1,5 +1,7 @@
 # Go binary
 /dashboard
+/dashboard-smoke
+/user-cli-smoke
 *.exe
 *.dll
 *.so
@@ -12,6 +14,13 @@ data/
 frontend/node_modules/
 frontend/.svelte-kit/
 frontend/build/
+
+# Root node_modules (Playwright)
+/node_modules/
+
+# Playwright
+/test-results/
+/playwright-report/
 
 # Environment
 .env

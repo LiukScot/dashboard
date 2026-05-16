@@ -43,6 +43,12 @@ var migrations = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_cron_run_history_scheduled_at
 		ON cron_run_history(scheduled_at)`,
+	// Foreign-key indexes: without them ON DELETE CASCADE and per-user
+	// session lookups full-scan. Added 2026-05-16 per codebase-analysis.
+	`CREATE INDEX IF NOT EXISTS idx_sessions_user_id
+		ON sessions(user_id)`,
+	`CREATE INDEX IF NOT EXISTS idx_cron_run_history_job_id
+		ON cron_run_history(job_id)`,
 	`CREATE TABLE IF NOT EXISTS metrics_history (
 		timestamp    INTEGER NOT NULL,
 		resolution   TEXT    NOT NULL,
@@ -57,10 +63,6 @@ var migrations = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_metrics_history_resolution_ts
 		ON metrics_history(resolution, timestamp)`,
-	`CREATE INDEX IF NOT EXISTS idx_sessions_user_id
-		ON sessions(user_id)`,
-	`CREATE INDEX IF NOT EXISTS idx_cron_run_history_job_id
-		ON cron_run_history(job_id)`,
 }
 
-const SchemaVersion = 7
+const SchemaVersion = 6
