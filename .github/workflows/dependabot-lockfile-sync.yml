@@ -38,21 +38,18 @@ jobs:
         with:
           bun-version: latest
 
-      - name: Refresh root lockfile
-        run: bun install --no-frozen-lockfile
-
       - name: Refresh frontend lockfile
         working-directory: frontend
         run: bun install --no-frozen-lockfile
 
       - name: Commit and push lockfile changes
         run: |
-          if [[ -z "$(git status --porcelain bun.lock frontend/bun.lock)" ]]; then
-            echo "Lockfiles already in sync, nothing to commit."
+          if [[ -z "$(git status --porcelain frontend/bun.lock)" ]]; then
+            echo "Lockfile already in sync, nothing to commit."
             exit 0
           fi
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add bun.lock frontend/bun.lock
+          git add frontend/bun.lock
           git commit -m "chore: sync bun.lock after dependabot bump"
           git push
