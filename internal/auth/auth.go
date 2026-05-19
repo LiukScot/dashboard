@@ -62,6 +62,10 @@ func NewService(db *sql.DB, sessionTTLSeconds int) *Service {
 }
 
 func (s *Service) Login(email, password string) (string, error) {
+	if len([]byte(password)) > bcryptMaxPasswordBytes {
+		return "", ErrPasswordTooLong
+	}
+
 	var user struct {
 		ID           int64
 		PasswordHash string

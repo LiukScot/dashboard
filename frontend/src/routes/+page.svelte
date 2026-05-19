@@ -4,7 +4,6 @@
 		api,
 		type Container,
 		type SystemMetrics,
-		type NetworkMetrics,
 		type ContainerStats,
 		type HistoryRange,
 		type HistorySample
@@ -16,7 +15,6 @@
 	import ContainerTable from '../components/ContainerTable.svelte';
 
 	let system = $state<SystemMetrics | null>(null);
-	let network = $state<NetworkMetrics[]>([]);
 	let containers = $state<Container[]>([]);
 	let dockerStats = $state<ContainerStats[]>([]);
 	let dockerError = $state('');
@@ -194,7 +192,6 @@
 				];
 			}
 			if (msg.network) {
-				network = msg.network;
 				const total = msg.network.reduce(
 					(acc, n) => ({ rx: acc.rx + n.rxRate, tx: acc.tx + n.txRate }),
 					{ rx: 0, tx: 0 }

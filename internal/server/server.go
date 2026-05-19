@@ -206,7 +206,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   s.cfg.CookieSecure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   s.cfg.SessionTTL,
 	})
 
@@ -227,7 +227,7 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 		Path:     "/",
 		HttpOnly: true,
 		Secure:   s.cfg.CookieSecure,
-		SameSite: http.SameSiteLaxMode,
+		SameSite: http.SameSiteStrictMode,
 		MaxAge:   -1,
 	})
 
@@ -364,7 +364,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	unit := r.URL.Query().Get("unit")
 	priority := -1
 	if p := r.URL.Query().Get("priority"); p != "" {
-		if n, err := strconv.Atoi(p); err == nil {
+		if n, err := strconv.Atoi(p); err == nil && n >= 0 && n <= 7 {
 			priority = n
 		}
 	}
@@ -511,7 +511,9 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	// If no frontend build exists, serve a placeholder
 	if _, err := fs.Stat(os.DirFS(publicDir), "."); err != nil {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte("<h1>Dashboard</h1><p>Frontend not built yet. Run <code>cd frontend && bun run build</code></p>"))
+		if _, werr := w.Write([]byte("<h1>Dashboard</h1><p>Frontend not built yet. Run <code>cd frontend && bun run build</code></p>")); werr != nil {
+			log.Printf("write placeholder: %v", werr)
+		}
 		return
 	}
 

@@ -9,8 +9,10 @@
 
 	let { containers, stats }: Props = $props();
 
+	const statsMap = $derived(new Map(stats.map((s) => [s.name, s])));
+
 	function getStats(name: string): ContainerStats | undefined {
-		return stats.find((s) => s.name === name);
+		return statsMap.get(name);
 	}
 
 	function formatBytes(bytes: number): string {

@@ -145,6 +145,7 @@ type MetricsBroadcast struct {
 func (ws *WSHandler) StartBroadcastLoop(interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	go func() {
+		defer ticker.Stop()
 		for range ticker.C {
 			if ws.hub.ClientCount() == 0 {
 				continue

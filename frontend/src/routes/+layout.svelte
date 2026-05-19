@@ -35,10 +35,15 @@
 	}
 
 	onMount(async () => {
-		const session = await api.session();
-		user = session.authenticated ? (session.user ?? null) : null;
-		loading = false;
-		unsubscribeWs = subscribeState((s) => (wsState = s));
+		try {
+			const session = await api.session();
+			user = session.authenticated ? (session.user ?? null) : null;
+		} catch {
+			user = null;
+		} finally {
+			loading = false;
+			unsubscribeWs = subscribeState((s) => (wsState = s));
+		}
 	});
 
 	onDestroy(() => {
@@ -46,8 +51,11 @@
 	});
 
 	async function logout() {
-		await api.logout();
-		user = null;
+		try {
+			await api.logout();
+		} finally {
+			user = null;
+		}
 	}
 
 	function closeMobileNav() {

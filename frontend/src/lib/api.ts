@@ -28,7 +28,6 @@ export const api = {
 		}),
 	logout: () => request('/api/v1/auth/logout', { method: 'POST' }),
 	session: () => request<SessionResponse>('/api/v1/auth/session'),
-	me: () => request<{ id: number; email: string }>('/api/v1/auth/me'),
 
 	systemOverview: () => request<SystemMetrics>('/api/v1/system/overview'),
 	cpuHistory: () => request<SystemMetrics[]>('/api/v1/system/cpu-history'),
