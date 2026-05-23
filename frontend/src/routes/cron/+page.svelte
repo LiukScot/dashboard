@@ -89,10 +89,6 @@
 		return `${String(hour).padStart(2, '0')}:00`;
 	}
 
-	function formatTimeLabel(occurrence: CronOccurrence) {
-		return occurrence.displayTime;
-	}
-
 	function formatScheduledLabel(occurrence: CronOccurrence) {
 		return `${formatDate(occurrence.dayKey)}, ${occurrence.displayTime}`;
 	}
@@ -235,7 +231,7 @@
 										onclick={() => (selected = occurrence)}
 										title={occurrence.command}
 									>
-											<div class="font-mono text-text-dim">{formatTimeLabel(occurrence)}</div>
+											<div class="font-mono text-text-dim">{occurrence.displayTime}</div>
 										<div class="truncate font-medium">{shortCommand(occurrence.command)}</div>
 									</button>
 								{/each}

@@ -82,20 +82,26 @@ func readLogFile(path string, unitName string, priorityFilter int) ([]LogEntry, 
 	}
 	defer file.Close()
 
-	// Read from end — get last 500 lines max
-	var lines []string
+	const maxLines = 500
+	ring := make([]string, maxLines)
+	pos, total := 0, 0
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
-		lines = append(lines, scanner.Text())
+		ring[pos%maxLines] = scanner.Text()
+		pos++
+		total++
 	}
 	if err := scanner.Err(); err != nil {
 		return nil, err
 	}
 
-	// Take last 500 lines
-	if len(lines) > 500 {
-		lines = lines[len(lines)-500:]
+	var lines []string
+	if total <= maxLines {
+		lines = ring[:total]
+	} else {
+		start := pos % maxLines
+		lines = append(ring[start:], ring[:start]...)
 	}
 
 	var entries []LogEntry

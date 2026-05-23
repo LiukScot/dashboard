@@ -85,11 +85,7 @@ func (c *CronCollector) Week(start time.Time) (CronWeek, error) {
 	jobs, warnings := c.ReadJobs()
 	hiddenCount := 0
 	if c.db != nil {
-		for _, job := range jobs {
-			if err := c.upsertJob(job); err != nil {
-				warnings = append(warnings, fmt.Sprintf("store %s:%d: %v", job.Source, job.Line, err))
-			}
-		}
+		warnings = append(warnings, c.upsertJobs(jobs)...)
 		_, importWarnings := c.importLogHistory(jobs, weekStart, weekEnd)
 		warnings = append(warnings, importWarnings...)
 		hidden, err := c.hiddenJobIDs()
@@ -603,8 +599,15 @@ func statusForOccurrence(when time.Time) string {
 	return "planned"
 }
 
-func (c *CronCollector) upsertJob(job CronJob) error {
-	_, err := c.db.Exec(
+func (c *CronCollector) upsertJobs(jobs []CronJob) []string {
+	if len(jobs) == 0 {
+		return nil
+	}
+	tx, err := c.db.Begin()
+	if err != nil {
+		return []string{fmt.Sprintf("begin upsert tx: %v", err)}
+	}
+	stmt, err := tx.Prepare(
 		`INSERT INTO cron_jobs(fingerprint, source, line, schedule, user, command, enabled, updated_at)
 		 VALUES(?, ?, ?, ?, ?, ?, 1, datetime('now'))
 		 ON CONFLICT(fingerprint) DO UPDATE SET
@@ -614,10 +617,23 @@ func (c *CronCollector) upsertJob(job CronJob) error {
 			user=excluded.user,
 			command=excluded.command,
 			enabled=1,
-			updated_at=datetime('now')`,
-		job.Fingerprint, job.Source, job.Line, job.Schedule, job.User, job.Command,
-	)
-	return err
+			updated_at=datetime('now')`)
+	if err != nil {
+		_ = tx.Rollback()
+		return []string{fmt.Sprintf("prepare upsert: %v", err)}
+	}
+	defer stmt.Close()
+	var warnings []string
+	for _, job := range jobs {
+		if _, err := stmt.Exec(job.Fingerprint, job.Source, job.Line, job.Schedule, job.User, job.Command); err != nil {
+			warnings = append(warnings, fmt.Sprintf("store %s:%d: %v", job.Source, job.Line, err))
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		_ = tx.Rollback()
+		return append(warnings, fmt.Sprintf("commit upsert tx: %v", err))
+	}
+	return warnings
 }
 
 func (c *CronCollector) history(start time.Time, end time.Time) ([]CronHistoryItem, error) {
@@ -728,6 +744,7 @@ func (c *CronCollector) importJournalHistory(byCommand map[string]CronJob, start
 		"--since", start.Format("2006-01-02 15:04:05"),
 		"--until", end.Format("2006-01-02 15:04:05"),
 		"--no-pager",
+		"--grep=CRON",
 	}
 	for _, dir := range []string{"/var/log/journal", "/run/log/journal"} {
 		if info, err := os.Stat(dir); err == nil && info.IsDir() {
@@ -804,13 +821,15 @@ func parseCronLogLine(line string, now time.Time) (time.Time, string, string, bo
 	}
 
 	userStart := strings.Index(line, "): (")
+	prefixLen := 4
 	if userStart == -1 {
 		userStart = strings.Index(line, ": (")
+		prefixLen = 3
 	}
 	if userStart == -1 {
 		return time.Time{}, "", "", false
 	}
-	afterPrefix := line[userStart+3:]
+	afterPrefix := line[userStart+prefixLen:]
 	userEnd := strings.Index(afterPrefix, ") CMD (")
 	if userEnd == -1 {
 		return time.Time{}, "", "", false

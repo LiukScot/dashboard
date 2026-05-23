@@ -20,7 +20,7 @@ jobs:
       pull-requests: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v6
+        uses: actions/checkout@v4
 
       # Fails the PR only on dependencies the diff introduces or bumps to a
       # vulnerable version. Reads from GitHub's Dependency graph; requires the
