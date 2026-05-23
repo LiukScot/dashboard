@@ -112,7 +112,7 @@ func TestHandleLoginSetsCookieOnSuccess(t *testing.T) {
 	setCookie := res.Header().Get("Set-Cookie")
 	assert.Contains(t, setCookie, "DASHBOARD_SESSID=")
 	assert.Contains(t, setCookie, "HttpOnly")
-	assert.Contains(t, setCookie, "SameSite=Lax")
+	assert.Contains(t, setCookie, "SameSite=Strict")
 }
 
 // --- /api/v1/auth/logout ----------------------------------------------------
