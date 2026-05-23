@@ -128,4 +128,39 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Build container image
-        run: docker build .
+        run: docker build -t dashboard:ci .
+
+      # Boot the real image and assert /healthz responds. A "docker build .\"
+      # check alone misses runtime regressions (missing modules, panics during
+      # migrate, broken entrypoint, dangling symlinks from a leaky
+      # .dockerignore, etc.) — those only surface when the binary actually
+      # runs. Mirror of the notes repo guard added after a silent crash-loop
+      # made it to production.
+      - name: Boot container
+        run: |
+          docker run -d --name dashboard-smoke -p 4200:4200 dashboard:ci
+
+      - name: Wait for /healthz (max 30s)
+        run: |
+          for i in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:4200/healthz | grep -q '"status":"ok"'; then
+              echo "healthz OK after ${i}s"
+              exit 0
+            fi
+            sleep 1
+          done
+          echo "::error::/healthz never responded; container logs:"
+          docker logs dashboard-smoke || true
+          exit 1
+
+      - name: Assert no fatal errors in logs
+        run: |
+          if docker logs dashboard-smoke 2>&1 | grep -E 'panic:|fatal error:|runtime error:|cannot find|undefined symbol'; then
+            echo "::error::container logged a fatal error during boot"
+            docker logs dashboard-smoke
+            exit 1
+          fi
+
+      - name: Stop container
+        if: always()
+        run: docker rm -f dashboard-smoke || true

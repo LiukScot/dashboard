@@ -43,4 +43,13 @@ ENV HOST=0.0.0.0 \
     PUBLIC_DIR=/app/frontend/build
 
 EXPOSE 4200
+
+# start-period gives migrations + entrypoint setup time to finish before the
+# first probe. After that, three failures flip the container to "unhealthy"
+# so the dashboard / external monitors can surface a crash-loop instead of it
+# sitting silently red — same pattern adopted in the notes repo after a
+# 1296-restart silent crash-loop went unnoticed for days.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+	CMD curl -fsS http://127.0.0.1:4200/healthz || exit 1
+
 ENTRYPOINT ["/app/entrypoint.sh"]
