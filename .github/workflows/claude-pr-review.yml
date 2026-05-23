@@ -105,7 +105,7 @@ jobs:
 
       - name: Run Claude PR review
         if: steps.prepare.outputs.should_run == 'true'
-        uses: anthropics/claude-code-action@51ea8ea73a139f2a74ff649e3092c25a904aed7e # v1.0.123
+        uses: anthropics/claude-code-action@787c5a0ce96a9a6cfb050ea0c8f4c05f2447c251 # v1.0.133
         env:
           PR_NUMBER: ${{ steps.prepare.outputs.pr_number }}
           PR_HEAD_SHA: ${{ steps.prepare.outputs.head_sha }}
