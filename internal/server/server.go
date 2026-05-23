@@ -29,6 +29,7 @@ type Server struct {
 	wsHandler  *WSHandler
 	mux        *http.ServeMux
 	startedAt  time.Time
+	csp        string
 }
 
 func New(cfg *config.Config, authSvc *auth.Service,
@@ -55,6 +56,15 @@ func New(cfg *config.Config, authSvc *auth.Service,
 		mux:        http.NewServeMux(),
 		startedAt:  time.Now(),
 	}
+
+	// CSP needs a hash per inline <script> SvelteKit emits; compute once at
+	// startup so we never ship 'unsafe-inline'. A new frontend build (filenames
+	// like start.<hash>.js change) requires a server restart to refresh.
+	hashes, err := scanInlineScriptHashes(cfg.PublicDir)
+	if err != nil {
+		log.Printf("csp: scan inline scripts in %s: %v", cfg.PublicDir, err)
+	}
+	s.csp = buildCSP(hashes)
 
 	s.routes()
 	return s
@@ -131,8 +141,9 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		h.Set("X-Content-Type-Options", "nosniff")
 		h.Set("X-Frame-Options", "DENY")
 		h.Set("Referrer-Policy", "no-referrer")
-		// Allow inline styles (Tailwind) while blocking cross-origin scripts.
-		h.Set("Content-Security-Policy", "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' wss:; frame-ancestors 'none'")
+		// Allow inline styles (Tailwind) and SvelteKit's bootstrap inline script
+		// via per-script SHA-256 hashes computed at startup — never 'unsafe-inline'.
+		h.Set("Content-Security-Policy", s.csp)
 		// Tell browsers to only use HTTPS for this origin for 1 year.
 		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
 		next.ServeHTTP(w, r)
