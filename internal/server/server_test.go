@@ -73,7 +73,21 @@ func TestHandleLoginRejectsOversizedBody(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, res.Code)
 }
 
-func TestHandleLoginRejectsMalformedJSON(t *testing.T) {
+func TestHandleLoginRejectsOversizedEmail(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t, nil, nil)
+
+	// 251 'a' chars + "@b.c" = 255 bytes, over the 254-byte RFC 5321 limit.
+	email := strings.Repeat("a", 251) + "@b.c"
+	body := fmt.Sprintf(`{"email":%q,"password":"pw"}`, email)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
+	res := httptest.NewRecorder()
+	srv.handleLogin(res, req)
+
+	assert.Equal(t, http.StatusBadRequest, res.Code)
+}
+
+func TestHandleLoginMalformedJSON(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, nil, nil)
 
@@ -496,6 +510,37 @@ func TestSecurityHeadersSet(t *testing.T) {
 	for header, want := range checks {
 		assert.Equal(t, want, res.Header().Get(header), "header %s", header)
 	}
+}
+
+func TestSecurityHeadersNoHSTSWhenCookieSecureDisabled(t *testing.T) {
+	t.Parallel()
+	srv := &Server{cfg: &config.Config{CookieSecure: false}}
+	wrapped := srv.securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	res := httptest.NewRecorder()
+	wrapped.ServeHTTP(res, req)
+
+	assert.Empty(t, res.Header().Get("Strict-Transport-Security"),
+		"HSTS must not be emitted over plain HTTP (CookieSecure=false)")
+}
+
+func TestSecurityHeadersSetsHSTSWhenCookieSecureEnabled(t *testing.T) {
+	t.Parallel()
+	srv := &Server{cfg: &config.Config{CookieSecure: true}}
+	wrapped := srv.securityHeaders(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/", nil)
+	res := httptest.NewRecorder()
+	wrapped.ServeHTTP(res, req)
+
+	hsts := res.Header().Get("Strict-Transport-Security")
+	assert.Contains(t, hsts, "max-age=", "HSTS header must be set when running over HTTPS")
+	assert.Contains(t, hsts, "includeSubDomains")
 }
 
 func TestCorsMiddlewareAllowsConfiguredOrigin(t *testing.T) {

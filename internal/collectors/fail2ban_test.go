@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestGetRecentBansParsesCommaMilliseconds(t *testing.T) {
@@ -65,5 +67,21 @@ func TestGetRecentBansParsesHyphenatedJailNames(t *testing.T) {
 
 	if events[0].Jail != "sshd-ddos" {
 		t.Fatalf("expected jail sshd-ddos, got %q", events[0].Jail)
+	}
+}
+
+func TestValidJailNameAcceptsNormalNames(t *testing.T) {
+	t.Parallel()
+	valid := []string{"sshd", "nginx-auth", "apache.auth", "jail_1", "a-b.c_d"}
+	for _, name := range valid {
+		assert.True(t, validJailName.MatchString(name), "expected %q to be valid", name)
+	}
+}
+
+func TestValidJailNameRejectsMalformed(t *testing.T) {
+	t.Parallel()
+	invalid := []string{"--version", "jail name", "jail/name", ""}
+	for _, name := range invalid {
+		assert.False(t, validJailName.MatchString(name), "expected %q to be invalid", name)
 	}
 }
