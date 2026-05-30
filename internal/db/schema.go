@@ -63,6 +63,11 @@ var migrations = []string{
 	)`,
 	`CREATE INDEX IF NOT EXISTS idx_metrics_history_resolution_ts
 		ON metrics_history(resolution, timestamp)`,
+	// Query() filters by timestamp only (no resolution filter), so the composite
+	// (resolution, timestamp) index above is skipped. A standalone timestamp
+	// index allows SQLite to use a range scan instead of a full table scan.
+	`CREATE INDEX IF NOT EXISTS idx_metrics_history_ts
+		ON metrics_history(timestamp)`,
 }
 
-const SchemaVersion = 6
+const SchemaVersion = 7

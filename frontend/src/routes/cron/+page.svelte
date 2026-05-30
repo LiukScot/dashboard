@@ -218,7 +218,7 @@
 
 						{#each daysInWeek() as day}
 							<div class="relative border-r border-border last:border-r-0">
-								{#each hours as _hour}
+								{#each hours as _}
 									<div class="h-14 border-b border-border/70"></div>
 								{/each}
 

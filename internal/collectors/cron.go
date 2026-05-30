@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -288,13 +289,15 @@ func jobSet(jobs []CronJob) map[string]bool {
 
 func (c *CronCollector) pruneStaleHidden(hidden map[string]bool, current map[string]bool) map[string]bool {
 	active := map[string]bool{}
-	for fingerprint := range hidden {
-		if current[fingerprint] {
-			active[fingerprint] = true
+	for fp := range hidden {
+		if current[fp] {
+			active[fp] = true
 			continue
 		}
 		if c.db != nil {
-			_, _ = c.db.Exec(`DELETE FROM cron_hidden_jobs WHERE job_id = ?`, fingerprint)
+			if _, err := c.db.Exec(`DELETE FROM cron_hidden_jobs WHERE job_id = ?`, fp); err != nil {
+				log.Printf("prune stale hidden cron job %s: %v", fp, err)
+			}
 		}
 	}
 	return active
@@ -334,7 +337,7 @@ func (c *CronCollector) resolveFiles() ([]string, []string) {
 
 func parseCronLine(raw string, source string, lineNo int) (CronJob, bool, string) {
 	line := strings.TrimSpace(raw)
-	if line == "" || strings.HasPrefix(line, "#") || strings.Contains(line, "=") && !strings.Contains(line, " ") {
+	if line == "" || strings.HasPrefix(line, "#") || (strings.Contains(line, "=") && !strings.Contains(line, " ")) {
 		return CronJob{}, false, ""
 	}
 	fields := strings.Fields(line)
@@ -420,9 +423,13 @@ func cronSourceUser(source string) string {
 	return ""
 }
 
+// fingerprintLen is the number of hex chars kept from the SHA-256 digest.
+// 16 hex chars = 64 bits: collision probability ~1e-15 for <1M distinct jobs.
+const fingerprintLen = 16
+
 func fingerprint(parts ...string) string {
 	sum := sha256.Sum256([]byte(strings.Join(parts, "\x00")))
-	return hex.EncodeToString(sum[:])[:16]
+	return hex.EncodeToString(sum[:])[:fingerprintLen]
 }
 
 func parseCronExpr(raw string) (cronExpr, error) {

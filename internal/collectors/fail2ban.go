@@ -56,6 +56,9 @@ func (f *Fail2BanCollector) GetStatus() (*Fail2BanStatus, error) {
 	}
 
 	for _, name := range jailNames {
+		if !validJailName.MatchString(name) {
+			continue
+		}
 		jail, err := f.getJailStatus(name)
 		if err != nil {
 			continue
@@ -113,6 +116,8 @@ func (f *Fail2BanCollector) getJailStatus(name string) (*JailStatus, error) {
 }
 
 var banLogPattern = regexp.MustCompile(`(\d{4}-\d{2}-\d{2}\s+\d{2}:\d{2}:\d{2},\d+)\s+fail2ban\.\w+\s+\[\d+\]:\s+\w+\s+\[([\w.-]+)\]\s+(Ban|Unban)\s+(\S+)`)
+
+var validJailName = regexp.MustCompile(`^[a-zA-Z0-9_.-]+$`)
 
 func (f *Fail2BanCollector) GetRecentBans(limit int) ([]BanEvent, error) {
 	logFile := filepath.Join(f.logPath, "fail2ban.log")
