@@ -87,6 +87,21 @@ func TestHandleLoginRejectsOversizedEmail(t *testing.T) {
 	assert.Equal(t, http.StatusBadRequest, res.Code)
 }
 
+func TestHandleLoginAllowsEmailAtMaxLengthBoundary(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t, nil, nil)
+
+	// 250 'a' chars + "@b.c" = 254 bytes (RFC 5321 max — must pass validation).
+	email := strings.Repeat("a", 250) + "@b.c"
+	body := fmt.Sprintf(`{"email":%q,"password":"pw"}`, email)
+	req := httptest.NewRequest(http.MethodPost, "/api/v1/auth/login", strings.NewReader(body))
+	res := httptest.NewRecorder()
+	srv.handleLogin(res, req)
+
+	// Validation passes; auth fails with 401 (unknown user), not 400.
+	assert.Equal(t, http.StatusUnauthorized, res.Code)
+}
+
 func TestHandleLoginMalformedJSON(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, nil, nil)
