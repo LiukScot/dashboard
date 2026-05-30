@@ -1,45 +1,56 @@
 version: 2
+
 updates:
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+      day: "monday"
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 7
     groups:
-      actions-minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
+      actions-routine:
+        patterns: ["*"]
 
   - package-ecosystem: "gomod"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+      day: "monday"
+    open-pull-requests-limit: 3
+    cooldown:
+      semver-major-days: 30
+      semver-minor-days: 14
+      semver-patch-days: 7
     groups:
-      gomod-minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
+      gomod-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "npm"
     directory: "/frontend"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+      day: "monday"
+    open-pull-requests-limit: 3
+    cooldown:
+      semver-major-days: 30
+      semver-minor-days: 14
+      semver-patch-days: 7
     groups:
-      frontend-minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
+      npm-minor-patch:
+        patterns: ["*"]
+        update-types: ["minor", "patch"]
 
   - package-ecosystem: "docker"
     directory: "/"
     schedule:
       interval: "weekly"
-    open-pull-requests-limit: 5
+      day: "monday"
+    open-pull-requests-limit: 3
+    cooldown:
+      default-days: 14
     groups:
-      docker-minor-and-patch:
-        update-types:
-          - "minor"
-          - "patch"
+      docker-routine:
+        patterns: ["*"]
