@@ -33,9 +33,10 @@ jobs:
       COMMENT_AUTHOR: ${{ github.event.comment.user.login }}
       IS_PR: ${{ github.event.issue.pull_request != null }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Save comment body to file
         # Mitigazione prompt injection: il body del commento NON viene espanso nel

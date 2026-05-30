@@ -26,6 +26,11 @@ const (
 	retain1mHours = 24
 	retain5mDays  = 7
 	retain1hDays  = 30
+
+	secondsPerHour = 3600
+	secondsPerDay  = 86400
+	bucket5mSecs   = 5 * 60
+	bucket1hSecs   = secondsPerHour
 )
 
 type SystemHistory struct {
@@ -123,14 +128,14 @@ func (h *SystemHistory) retentionLoop(ctx context.Context) {
 // runRetention downsamples 1m→5m past 24h, 5m→1h past 7d, deletes 1h past 30d.
 func (h *SystemHistory) runRetention() error {
 	now := time.Now().Unix()
-	cutoff1m := now - int64(retain1mHours*3600)
-	cutoff5m := now - int64(retain5mDays*86400)
-	cutoff1h := now - int64(retain1hDays*86400)
+	cutoff1m := now - int64(retain1mHours*secondsPerHour)
+	cutoff5m := now - int64(retain5mDays*secondsPerDay)
+	cutoff1h := now - int64(retain1hDays*secondsPerDay)
 
-	if err := h.downsample(resolution1m, resolution5m, cutoff1m, 300); err != nil {
+	if err := h.downsample(resolution1m, resolution5m, cutoff1m, bucket5mSecs); err != nil {
 		return fmt.Errorf("downsample 1m→5m: %w", err)
 	}
-	if err := h.downsample(resolution5m, resolution1h, cutoff5m, 3600); err != nil {
+	if err := h.downsample(resolution5m, resolution1h, cutoff5m, bucket1hSecs); err != nil {
 		return fmt.Errorf("downsample 5m→1h: %w", err)
 	}
 	if _, err := h.db.Exec(

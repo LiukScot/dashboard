@@ -45,7 +45,7 @@
 			cy={center}
 			r={radius}
 			fill="none"
-			stroke="#1e1e2e"
+			style="stroke: var(--color-border)"
 			stroke-width="10"
 		/>
 		<circle
@@ -67,7 +67,7 @@
 			x={center}
 			y="60"
 			text-anchor="middle"
-			fill="#e4e4ef"
+			style="fill: var(--color-text)"
 			font-size="11"
 			font-weight="500"
 			letter-spacing="0.04em"
@@ -78,7 +78,7 @@
 			x={center}
 			y="84"
 			text-anchor="middle"
-			fill="#e4e4ef"
+			style="fill: var(--color-text)"
 			font-size="21"
 			font-weight="600"
 		>

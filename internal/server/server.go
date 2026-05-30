@@ -133,6 +133,8 @@ func (s *Server) Start() error {
 	return srv.ListenAndServe()
 }
 
+const hstsMaxAgeSeconds = 365 * 24 * 3600
+
 // securityHeaders sets baseline response headers that harden the SPA + cookie
 // session against clickjacking, MIME sniffing, and XSS.
 func (s *Server) securityHeaders(next http.Handler) http.Handler {
@@ -144,8 +146,11 @@ func (s *Server) securityHeaders(next http.Handler) http.Handler {
 		// Allow inline styles (Tailwind) and SvelteKit's bootstrap inline script
 		// via per-script SHA-256 hashes computed at startup — never 'unsafe-inline'.
 		h.Set("Content-Security-Policy", s.csp)
-		// Tell browsers to only use HTTPS for this origin for 1 year.
-		h.Set("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
+		// Only emit HSTS when running under HTTPS; emitting it over plain HTTP
+		// pins the domain to HTTPS in the browser for a year with no benefit.
+		if s.cfg.CookieSecure {
+			h.Set("Strict-Transport-Security", fmt.Sprintf("max-age=%d; includeSubDomains", hstsMaxAgeSeconds))
+		}
 		next.ServeHTTP(w, r)
 	})
 }
@@ -194,14 +199,20 @@ func (s *Server) withAuth(handler http.HandlerFunc) http.HandlerFunc {
 
 // --- Auth handlers ---
 
+const loginMaxBodyBytes = 4096
+
 func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 4096)
+	r.Body = http.MaxBytesReader(w, r.Body, loginMaxBodyBytes)
 	var body struct {
 		Email    string `json:"email"`
 		Password string `json:"password"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
+		return
+	}
+	if len(body.Email) > 254 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid credentials"})
 		return
 	}
 
@@ -522,7 +533,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	// If no frontend build exists, serve a placeholder
 	if _, err := fs.Stat(os.DirFS(publicDir), "."); err != nil {
 		w.Header().Set("Content-Type", "text/html")
-		w.Write([]byte("<h1>Dashboard</h1><p>Frontend not built yet. Run <code>cd frontend && bun run build</code></p>"))
+		_, _ = w.Write([]byte("<h1>Dashboard</h1><p>Frontend not built yet. Run <code>cd frontend && bun run build</code></p>"))
 		return
 	}
 

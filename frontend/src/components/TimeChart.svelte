@@ -38,6 +38,15 @@
 
 	const fallbackHeight = 250;
 
+	// Colors mirroring CSS design tokens; ECharts config is pure JS so CSS
+	// variables cannot be used directly — keep values in sync with app.css.
+	const THEME = {
+		border:  '#1e1e2e',
+		textDim: '#8888a0',
+		text:    '#e4e4ef',
+		bgCard:  '#12121a',
+	} as const;
+
 	let { title, labels, series, yAxisLabel = '', height = '250px', zoomable = false }: Props = $props();
 	let container: HTMLDivElement | undefined;
 	let chart: EChartsType | null = null;
@@ -82,7 +91,7 @@
 					left: 12,
 					top: 8,
 					textStyle: {
-						color: '#8888a0',
+						color: THEME.textDim,
 						fontSize: 12,
 						fontWeight: 500
 					}
@@ -95,7 +104,7 @@
 					itemWidth: 8,
 					itemHeight: 8,
 					textStyle: {
-						color: '#8888a0',
+						color: THEME.textDim,
 						fontSize: 11
 					}
 				},
@@ -112,15 +121,15 @@
 								type: 'slider',
 								height: 18,
 								bottom: 8,
-								borderColor: '#1e1e2e',
+								borderColor: THEME.border,
 								backgroundColor: 'transparent',
 								fillerColor: 'rgba(0, 212, 170, 0.15)',
 								handleStyle: { color: '#00d4aa' },
 								moveHandleStyle: { color: '#00d4aa' },
-								textStyle: { color: '#8888a0', fontSize: 10 },
+								textStyle: { color: THEME.textDim, fontSize: 10 },
 								dataBackground: {
-									lineStyle: { color: '#1e1e2e' },
-									areaStyle: { color: '#1e1e2e' }
+									lineStyle: { color: THEME.border },
+									areaStyle: { color: THEME.border }
 								},
 								selectedDataBackground: {
 									lineStyle: { color: '#00d4aa' },
@@ -131,15 +140,15 @@
 					: undefined,
 				tooltip: {
 					trigger: 'axis',
-					backgroundColor: '#12121a',
-					borderColor: '#1e1e2e',
+					backgroundColor: THEME.bgCard,
+					borderColor: THEME.border,
 					textStyle: {
-						color: '#e4e4ef'
+						color: THEME.text
 					},
 					axisPointer: {
 						type: 'line',
 						lineStyle: {
-							color: '#8888a0',
+							color: THEME.textDim,
 							opacity: 0.35
 						}
 					}
@@ -150,14 +159,14 @@
 					boundaryGap: false,
 					axisLine: {
 						lineStyle: {
-							color: '#1e1e2e'
+							color: THEME.border
 						}
 					},
 					axisTick: {
 						show: false
 					},
 					axisLabel: {
-						color: '#8888a0',
+						color: THEME.textDim,
 						fontSize: 10,
 						hideOverlap: true
 					}
@@ -173,13 +182,13 @@
 						show: false
 					},
 					axisLabel: {
-						color: '#8888a0',
+						color: THEME.textDim,
 						fontSize: 10,
 						formatter: (value: number) => formatYAxisValue(value)
 					},
 					splitLine: {
 						lineStyle: {
-							color: '#1e1e2e',
+							color: THEME.border,
 							type: 'dashed'
 						}
 					}
@@ -208,7 +217,7 @@
 					};
 				})
 			},
-			{ notMerge: true }
+			{ replaceMerge: ['series'] }
 		);
 	}
 
