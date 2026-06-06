@@ -136,8 +136,23 @@ func (d *DockerCollector) ListContainers() ([]Container, error) {
 	return containers, nil
 }
 
+func isValidContainerID(id string) bool {
+	if len(id) != 12 {
+		return false
+	}
+	for _, c := range id {
+		if !('0' <= c && c <= '9' || 'a' <= c && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
+
 func (d *DockerCollector) GetContainerStats(containerID string) (*ContainerStats, error) {
-	resp, err := d.client.Get(fmt.Sprintf("http://docker/" + dockerAPIVersion + "/containers/%s/stats?stream=false", containerID))
+	if !isValidContainerID(containerID) {
+		return nil, fmt.Errorf("invalid container id %q", containerID)
+	}
+	resp, err := d.client.Get(fmt.Sprintf("http://docker/%s/containers/%s/stats?stream=false", dockerAPIVersion, containerID))
 	if err != nil {
 		return nil, fmt.Errorf("docker stats %s: %w", containerID, err)
 	}

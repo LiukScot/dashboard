@@ -247,7 +247,6 @@
 		zoomable;
 
 		updateChart();
-		chart?.resize();
 	});
 </script>
 

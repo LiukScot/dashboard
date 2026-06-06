@@ -187,13 +187,17 @@ func (h *SystemHistory) downsample(srcRes, dstRes string, cutoff, bucketSec int6
 		return err
 	}
 
+	stmt, err := tx.Prepare(
+		`INSERT OR REPLACE INTO metrics_history
+		 (timestamp, resolution, cpu_percent, mem_percent, disk_percent, swap_percent, net_rx_rate, net_tx_rate, load_avg_1)
+		 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	)
+	if err != nil {
+		return err
+	}
+	defer stmt.Close()
 	for _, b := range buckets {
-		if _, err := tx.Exec(
-			`INSERT OR REPLACE INTO metrics_history
-			 (timestamp, resolution, cpu_percent, mem_percent, disk_percent, swap_percent, net_rx_rate, net_tx_rate, load_avg_1)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-			b.ts, dstRes, b.cpu, b.mem, b.disk, b.swap, b.rx, b.tx, b.load,
-		); err != nil {
+		if _, err := stmt.Exec(b.ts, dstRes, b.cpu, b.mem, b.disk, b.swap, b.rx, b.tx, b.load); err != nil {
 			return err
 		}
 	}

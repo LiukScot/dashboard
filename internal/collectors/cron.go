@@ -289,15 +289,23 @@ func jobSet(jobs []CronJob) map[string]bool {
 
 func (c *CronCollector) pruneStaleHidden(hidden map[string]bool, current map[string]bool) map[string]bool {
 	active := map[string]bool{}
+	var stale []string
 	for fp := range hidden {
 		if current[fp] {
 			active[fp] = true
-			continue
+		} else {
+			stale = append(stale, fp)
 		}
-		if c.db != nil {
-			if _, err := c.db.Exec(`DELETE FROM cron_hidden_jobs WHERE job_id = ?`, fp); err != nil {
-				log.Printf("prune stale hidden cron job %s: %v", fp, err)
-			}
+	}
+	if c.db != nil && len(stale) > 0 {
+		placeholders := strings.Repeat("?,", len(stale))
+		placeholders = placeholders[:len(placeholders)-1]
+		args := make([]any, len(stale))
+		for i, fp := range stale {
+			args[i] = fp
+		}
+		if _, err := c.db.Exec(`DELETE FROM cron_hidden_jobs WHERE job_id IN (`+placeholders+`)`, args...); err != nil {
+			log.Printf("prune stale hidden cron jobs: %v", err)
 		}
 	}
 	return active
@@ -479,8 +487,13 @@ var weekdayNames = map[string]string{
 
 func normalizeNamedField(raw string, mapping map[string]string) string {
 	result := strings.ToLower(raw)
-	for name, value := range mapping {
-		result = strings.ReplaceAll(result, name, value)
+	keys := make([]string, 0, len(mapping))
+	for k := range mapping {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, name := range keys {
+		result = strings.ReplaceAll(result, name, mapping[name])
 	}
 	return result
 }
@@ -712,26 +725,33 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 			}
 			continue
 		}
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			observedAt, user, command, ok := parseCronLogLine(scanner.Text(), reference)
-			if !ok || observedAt.Before(start) || !observedAt.Before(end) {
-				continue
+		func() {
+			defer func() { _ = file.Close() }()
+			scanner := bufio.NewScanner(file)
+			for scanner.Scan() {
+				line := scanner.Text()
+				observedAt, user, command, ok := parseCronLogLine(line, reference)
+				if !ok || observedAt.Before(start) || !observedAt.Before(end) {
+					continue
+				}
+				job, exists := byCommand[historyKey(user, command)]
+				if !exists {
+					continue
+				}
+				msg := line
+				if len(msg) > 512 {
+					msg = msg[:512]
+				}
+				if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", logFile, msg); err != nil {
+					warnings = append(warnings, fmt.Sprintf("insert history %s at %s from %s: %v (line: %q)", job.Fingerprint, observedAt.Format(time.RFC3339), logFile, err, line))
+				} else {
+					imported++
+				}
 			}
-			job, exists := byCommand[historyKey(user, command)]
-			if !exists {
-				continue
+			if err := scanner.Err(); err != nil {
+				warnings = append(warnings, fmt.Sprintf("scan %s: %v", logFile, err))
 			}
-			if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", logFile, scanner.Text()); err != nil {
-				warnings = append(warnings, fmt.Sprintf("insert history %s at %s from %s: %v (line: %q)", job.Fingerprint, observedAt.Format(time.RFC3339), logFile, err, scanner.Text()))
-			} else {
-				imported++
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			warnings = append(warnings, fmt.Sprintf("scan %s: %v", logFile, err))
-		}
-		_ = file.Close()
+		}()
 	}
 
 	if err := tx.Commit(); err != nil {
