@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -142,10 +143,22 @@ type MetricsBroadcast struct {
 	Docker  []collectors.ContainerStats `json:"docker,omitempty"`
 }
 
-func (ws *WSHandler) StartBroadcastLoop(interval time.Duration) {
+// StartBroadcastLoop runs the metrics broadcast goroutine until ctx is
+// cancelled. The returned channel closes once the goroutine has exited and the
+// ticker is stopped, letting a caller wait for a clean shutdown.
+func (ws *WSHandler) StartBroadcastLoop(ctx context.Context, interval time.Duration) <-chan struct{} {
 	ticker := time.NewTicker(interval)
+	done := make(chan struct{})
 	go func() {
-		for range ticker.C {
+		defer close(done)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+
 			if ws.hub.ClientCount() == 0 {
 				continue
 			}
@@ -171,4 +184,5 @@ func (ws *WSHandler) StartBroadcastLoop(interval time.Duration) {
 			ws.hub.Broadcast(data)
 		}
 	}()
+	return done
 }

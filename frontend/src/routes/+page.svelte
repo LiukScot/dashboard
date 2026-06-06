@@ -13,8 +13,11 @@
 	import { toastError } from '$lib/stores/toast.svelte';
 	import { formatBytes } from '$lib/format';
 	import GaugeRing from '../components/GaugeRing.svelte';
-	import TimeChart from '../components/TimeChart.svelte';
 	import ContainerTable from '../components/ContainerTable.svelte';
+
+	// ECharts is heavy (~552 KB); load TimeChart lazily so it lands in its own
+	// chunk (see vite.config.ts manualChunks) instead of the main route bundle.
+	const timeChart = import('../components/TimeChart.svelte');
 
 	let system = $state<SystemMetrics | null>(null);
 	let network = $state<NetworkMetrics[]>([]);
@@ -231,6 +234,14 @@
 
 </script>
 
+{#snippet chartSkeleton()}
+	<div
+		class="h-64 w-full animate-pulse rounded-lg bg-bg-hover"
+		role="status"
+		aria-label="Loading chart"
+	></div>
+{/snippet}
+
 <div class="space-y-6">
 	{#if initialLoading}
 		<div class="flex items-center justify-center py-16">
@@ -317,22 +328,30 @@
 	<!-- Charts -->
 	<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
 		<div class="bg-bg-card border border-border rounded-xl p-4">
-			<TimeChart
-				title={`${metrics[selectedMetric].label} ${historyLive ? '(live)' : `(${historyRange})`}`}
-				labels={metricChartLabels}
-				series={metricChartSeries}
-				yAxisLabel="%"
-				zoomable={!historyLive}
-			/>
+			{#await timeChart}
+				{@render chartSkeleton()}
+			{:then { default: TimeChart }}
+				<TimeChart
+					title={`${metrics[selectedMetric].label} ${historyLive ? '(live)' : `(${historyRange})`}`}
+					labels={metricChartLabels}
+					series={metricChartSeries}
+					yAxisLabel="%"
+					zoomable={!historyLive}
+				/>
+			{/await}
 		</div>
 		<div class="bg-bg-card border border-border rounded-xl p-4">
-			<TimeChart
-				title={historyLive ? 'Network Bandwidth (live)' : `Network Bandwidth (${historyRange})`}
-				labels={netChartLabels}
-				series={netChartSeries}
-				yAxisLabel="KB/s"
-				zoomable={!historyLive}
-			/>
+			{#await timeChart}
+				{@render chartSkeleton()}
+			{:then { default: TimeChart }}
+				<TimeChart
+					title={historyLive ? 'Network Bandwidth (live)' : `Network Bandwidth (${historyRange})`}
+					labels={netChartLabels}
+					series={netChartSeries}
+					yAxisLabel="KB/s"
+					zoomable={!historyLive}
+				/>
+			{/await}
 		</div>
 	</div>
 

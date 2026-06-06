@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -108,9 +109,10 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/", s.handleStatic)
 }
 
-func (s *Server) Start() error {
-	// Start WebSocket broadcast
-	s.wsHandler.StartBroadcastLoop(3 * time.Second)
+func (s *Server) Start(ctx context.Context) error {
+	// Start WebSocket broadcast; ctx cancellation stops the loop and its ticker
+	// on shutdown so neither the goroutine nor the ticker leaks.
+	s.wsHandler.StartBroadcastLoop(ctx, 3*time.Second)
 
 	// Initial collection to populate data
 	if _, err := s.sysColl.Collect(); err != nil {
@@ -265,24 +267,19 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// handleSession is a public endpoint, so it returns only the boolean auth
+// state — never user PII (id/email). The authenticated client fetches user
+// details from the auth-gated /api/v1/auth/me.
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
-	response := map[string]any{"authenticated": false}
+	authenticated := false
 
-	cookie, err := r.Cookie(auth.SessionCookieName)
-	if err != nil {
-		writeJSON(w, http.StatusOK, response)
-		return
+	if cookie, err := r.Cookie(auth.SessionCookieName); err == nil {
+		if _, err := s.authSvc.ValidateSession(cookie.Value); err == nil {
+			authenticated = true
+		}
 	}
 
-	user, err := s.authSvc.ValidateSession(cookie.Value)
-	if err != nil {
-		writeJSON(w, http.StatusOK, response)
-		return
-	}
-
-	response["authenticated"] = true
-	response["user"] = user
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": authenticated})
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {

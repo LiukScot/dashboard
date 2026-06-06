@@ -148,7 +148,6 @@ export interface LogEntry {
 
 export interface SessionResponse {
 	authenticated: boolean;
-	user?: { id: number; email: string };
 }
 
 export interface CronWeek {

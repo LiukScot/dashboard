@@ -39,5 +39,5 @@ func main() {
 
 	srv := server.New(cfg, authSvc, sysColl, sysHist, dockerColl, f2bColl, logColl, cronColl)
 
-	log.Fatal(srv.Start())
+	log.Fatal(srv.Start(ctx))
 }

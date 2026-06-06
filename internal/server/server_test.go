@@ -197,7 +197,7 @@ func TestHandleSessionReturnsAuthenticatedFalseWithoutCookie(t *testing.T) {
 	assert.False(t, body.Authenticated)
 }
 
-func TestHandleSessionReturnsUserWhenAuthenticated(t *testing.T) {
+func TestHandleSessionAuthenticatedOmitsUserPII(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, nil, nil)
 	sid := loginUser(t, srv, "alice@example.com", "pw")
@@ -208,16 +208,15 @@ func TestHandleSessionReturnsUserWhenAuthenticated(t *testing.T) {
 	srv.handleSession(res, req)
 
 	require.Equal(t, http.StatusOK, res.Code)
-	var body struct {
-		Authenticated bool `json:"authenticated"`
-		User          *struct {
-			Email string `json:"email"`
-		} `json:"user"`
-	}
-	require.NoError(t, json.NewDecoder(res.Body).Decode(&body))
-	assert.True(t, body.Authenticated)
-	require.NotNil(t, body.User)
-	assert.Equal(t, "alice@example.com", body.User.Email)
+
+	// The public session endpoint must not leak user id/email; only the
+	// authenticated boolean is allowed in the body.
+	var raw map[string]any
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&raw))
+	assert.Equal(t, true, raw["authenticated"])
+	_, hasUser := raw["user"]
+	assert.False(t, hasUser, "session response must not include a user object")
+	assert.NotContains(t, res.Body.String(), "alice@example.com")
 }
 
 // --- withAuth ---------------------------------------------------------------

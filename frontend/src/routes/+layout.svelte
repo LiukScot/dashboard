@@ -34,10 +34,16 @@
 		}
 	}
 
+	async function loadUser(): Promise<typeof user> {
+		const session = await api.session();
+		// /session is a public endpoint and returns no PII; fetch user details
+		// from the auth-gated /me only once we know the session is valid.
+		return session.authenticated ? await api.me() : null;
+	}
+
 	onMount(async () => {
 		try {
-			const session = await api.session();
-			user = session.authenticated ? (session.user ?? null) : null;
+			user = await loadUser();
 		} catch {
 			user = null;
 		} finally {
@@ -100,8 +106,7 @@
 				const data = new FormData(form);
 				try {
 					await api.login(data.get('email') as string, data.get('password') as string);
-					const session = await api.session();
-					user = session.authenticated ? (session.user ?? null) : null;
+					user = await loadUser();
 					loginError = '';
 				} catch (err) {
 					loginError = err instanceof Error ? err.message : 'Sign in failed';
