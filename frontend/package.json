@@ -12,7 +12,7 @@
   },
   "devDependencies": {
     "@sveltejs/adapter-static": "^3.0.10",
-    "@sveltejs/kit": "^2.61.0",
+    "@sveltejs/kit": "^2.63.0",
     "@sveltejs/vite-plugin-svelte": "^5.1.1",
     "@tailwindcss/vite": "^4.3.0",
     "@testing-library/jest-dom": "^6.9.1",
@@ -29,5 +29,8 @@
   "type": "module",
   "dependencies": {
     "echarts": "^6.1.0"
+  },
+  "overrides": {
+    "cookie": "^0.7.2"
   }
 }

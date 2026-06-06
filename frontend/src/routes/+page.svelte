@@ -11,6 +11,7 @@
 	} from '$lib/api';
 	import { subscribe, type MetricsMessage } from '$lib/ws';
 	import { toastError } from '$lib/stores/toast.svelte';
+	import { formatBytes } from '$lib/format';
 	import GaugeRing from '../components/GaugeRing.svelte';
 	import TimeChart from '../components/TimeChart.svelte';
 	import ContainerTable from '../components/ContainerTable.svelte';
@@ -24,6 +25,9 @@
 	type LivePoint = { time: string; cpu: number; mem: number; disk: number; swap: number };
 	let liveHistory = $state<LivePoint[]>([]);
 	let netHistory = $state<{ time: string; rx: number; tx: number }[]>([]);
+
+	const liveHistoryCap = 120;
+	const netHistoryCap = 60;
 
 	type MetricKey = 'cpu' | 'mem' | 'disk' | 'swap';
 	const metrics: Record<MetricKey, {
@@ -183,7 +187,7 @@
 				system = msg.system;
 				const s = msg.system;
 				liveHistory = [
-					...liveHistory.slice(-119),
+					...liveHistory.slice(-(liveHistoryCap - 1)),
 					{
 						time: new Date(s.timestamp).toLocaleTimeString(),
 						cpu: s.cpuPercent,
@@ -200,7 +204,7 @@
 					{ rx: 0, tx: 0 }
 				);
 				netHistory = [
-					...netHistory.slice(-59),
+					...netHistory.slice(-(netHistoryCap - 1)),
 					{
 						time: new Date().toLocaleTimeString(),
 						rx: total.rx / 1024,
@@ -225,12 +229,6 @@
 		return `${m}m`;
 	}
 
-	function formatBytes(bytes: number): string {
-		if (bytes <= 0) return '0 B';
-		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-		return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
-	}
 </script>
 
 <div class="space-y-6">

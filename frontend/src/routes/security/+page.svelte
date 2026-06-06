@@ -160,12 +160,18 @@
 			<div class="flex items-center justify-between mb-3">
 				<h3 class="text-sm font-medium text-text-dim">System Logs</h3>
 				<div class="flex gap-2">
+					<label for="log-unit-filter" class="sr-only">Unit filter</label>
 					<input
+						id="log-unit-filter"
+						name="log-unit-filter"
 						bind:value={logUnit}
 						placeholder="Unit filter..."
 						class="bg-bg border border-border rounded px-3 py-1.5 text-xs w-40 focus:outline-none focus:border-accent"
 					/>
+					<label for="log-priority-filter" class="sr-only">Priority filter</label>
 					<select
+						id="log-priority-filter"
+						name="log-priority-filter"
 						bind:value={logPriority}
 						onchange={filterLogs}
 						class="bg-bg border border-border rounded px-3 py-1.5 text-xs focus:outline-none focus:border-accent"

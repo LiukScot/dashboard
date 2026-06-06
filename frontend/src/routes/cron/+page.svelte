@@ -50,12 +50,12 @@
 
 	function moveWeek(days: number) {
 		weekStart = addDays(weekStart, days);
-		loadWeek();
+		void loadWeek();
 	}
 
 	function today() {
 		weekStart = startOfWeek(new Date());
-		loadWeek();
+		void loadWeek();
 	}
 
 	function daysInWeek() {
@@ -141,16 +141,16 @@
 			<p class="text-sm text-text-dim">{weekTitle()}</p>
 		</div>
 		<div class="flex flex-wrap items-center gap-2">
-			<button class="rounded border border-border px-3 py-1.5 text-sm text-text-dim hover:bg-bg-hover" onclick={() => moveWeek(-7)}>
+			<button type="button" class="rounded border border-border px-3 py-1.5 text-sm text-text-dim hover:bg-bg-hover" onclick={() => moveWeek(-7)}>
 				‹
 			</button>
-			<button class="rounded border border-border px-3 py-1.5 text-sm text-text-dim hover:bg-bg-hover" onclick={today}>
+			<button type="button" class="rounded border border-border px-3 py-1.5 text-sm text-text-dim hover:bg-bg-hover" onclick={today}>
 				Today
 			</button>
-			<button class="rounded border border-border px-3 py-1.5 text-sm text-text-dim hover:bg-bg-hover" onclick={() => moveWeek(7)}>
+			<button type="button" class="rounded border border-border px-3 py-1.5 text-sm text-text-dim hover:bg-bg-hover" onclick={() => moveWeek(7)}>
 				›
 			</button>
-			<button class="rounded bg-accent/10 px-3 py-1.5 text-sm text-accent hover:bg-accent/20" onclick={loadWeek}>
+			<button type="button" class="rounded bg-accent/10 px-3 py-1.5 text-sm text-accent hover:bg-accent/20" onclick={loadWeek}>
 				Refresh
 			</button>
 			{#if week}

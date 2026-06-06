@@ -23,6 +23,7 @@ const webServerCommand = [
 		`PUBLIC_DIR=${quote(path.resolve('frontend/build'))} ` +
 		`PROC_PATH=/proc LOG_PATH=/tmp CRON_PATHS=/etc/crontab ` +
 		`ALLOWED_ORIGINS=http://127.0.0.1:${smokePort} ` +
+		`COOKIE_SECURE=false ` +
 		`bun run smoke:serve`
 ].join(' && ');
 

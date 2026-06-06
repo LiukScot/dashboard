@@ -62,6 +62,9 @@ func NewService(db *sql.DB, sessionTTLSeconds int) *Service {
 }
 
 func (s *Service) Login(email, password string) (string, error) {
+	if len(email) > 254 {
+		return "", ErrInvalidCredentials
+	}
 	if len([]byte(password)) > bcryptMaxPasswordBytes {
 		return "", ErrInvalidCredentials
 	}

@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -134,6 +135,14 @@ func (s *Server) Start() error {
 }
 
 const hstsMaxAgeSeconds = 365 * 24 * 3600
+
+const (
+	defaultBanLimit = 50
+	defaultLogLimit = 100
+	maxQueryLimit   = 1000
+)
+
+var cronFingerprintRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
 
 // securityHeaders sets baseline response headers that harden the SPA + cookie
 // session against clickjacking, MIME sniffing, and XSS.
@@ -363,14 +372,14 @@ func (s *Server) handleFail2Ban(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFail2BanBans(w http.ResponseWriter, r *http.Request) {
-	limit := 50
+	limit := defaultBanLimit
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if n, err := strconv.Atoi(l); err == nil && n > 0 {
 			limit = n
 		}
 	}
-	if limit > 1000 {
-		limit = 1000
+	if limit > maxQueryLimit {
+		limit = maxQueryLimit
 	}
 
 	events, err := s.f2bColl.GetRecentBans(limit)
@@ -384,20 +393,28 @@ func (s *Server) handleFail2BanBans(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	unit := r.URL.Query().Get("unit")
+	if len(unit) > 128 {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unit filter too long"})
+		return
+	}
 	priority := -1
 	if p := r.URL.Query().Get("priority"); p != "" {
 		if n, err := strconv.Atoi(p); err == nil {
+			if n < 0 || n > 7 {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "priority must be 0-7"})
+				return
+			}
 			priority = n
 		}
 	}
-	limit := 100
+	limit := defaultLogLimit
 	if l := r.URL.Query().Get("limit"); l != "" {
 		if n, err := strconv.Atoi(l); err == nil && n > 0 {
 			limit = n
 		}
 	}
-	if limit > 1000 {
-		limit = 1000
+	if limit > maxQueryLimit {
+		limit = maxQueryLimit
 	}
 
 	entries, err := s.logColl.GetLogs(unit, priority, limit)
@@ -444,6 +461,10 @@ func (s *Server) handleHideCronJob(w http.ResponseWriter, r *http.Request) {
 	fingerprint := strings.TrimSpace(r.PathValue("fingerprint"))
 	if fingerprint == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing cron job id"})
+		return
+	}
+	if !cronFingerprintRe.MatchString(fingerprint) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cron job id"})
 		return
 	}
 	if err := s.cronColl.HideJob(fingerprint); err != nil {
@@ -517,6 +538,10 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 	// Try to serve the requested file
 	if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
+		// SvelteKit hashes filenames under /_app/immutable/ — safe to cache forever.
+		if strings.HasPrefix(r.URL.Path, "/_app/immutable/") {
+			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+		}
 		http.ServeFile(w, r, filePath)
 		return
 	}
