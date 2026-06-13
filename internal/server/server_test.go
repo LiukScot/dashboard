@@ -719,3 +719,60 @@ func TestServerEndToEndAuthFlow(t *testing.T) {
 	require.NoError(t, json.NewDecoder(resp3.Body).Decode(&post))
 	assert.True(t, post.Authenticated)
 }
+
+// --- security handlers: logs + fail2ban bans -------------------------------
+
+func TestHandleLogsRejectsUnitFilterTooLong(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t, nil, nil)
+
+	unit := strings.Repeat("a", maxUnitFilterBytes+1)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/security/logs?unit="+unit, nil)
+	res := httptest.NewRecorder()
+	srv.handleLogs(res, req)
+
+	assert.Equal(t, http.StatusBadRequest, res.Code)
+}
+
+func TestHandleLogsRejectsPriorityOutOfRange(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/security/logs?priority=9", nil)
+	res := httptest.NewRecorder()
+	srv.handleLogs(res, req)
+
+	assert.Equal(t, http.StatusBadRequest, res.Code)
+}
+
+func TestHandleLogsReturnsEmptyWhenNoLogFiles(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t, nil, func(s *Server) {
+		s.logColl = collectors.NewLogCollector(t.TempDir())
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/security/logs", nil)
+	res := httptest.NewRecorder()
+	srv.handleLogs(res, req)
+
+	assert.Equal(t, http.StatusOK, res.Code)
+	var entries []collectors.LogEntry
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&entries))
+	assert.Empty(t, entries)
+}
+
+func TestHandleFail2BanBansReturnsEmptyWhenNoLogFile(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t, nil, func(s *Server) {
+		s.f2bColl = collectors.NewFail2BanCollector(t.TempDir())
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/security/fail2ban/bans", nil)
+	res := httptest.NewRecorder()
+	srv.handleFail2BanBans(res, req)
+
+	assert.Equal(t, http.StatusOK, res.Code)
+	var events []collectors.BanEvent
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&events))
+	assert.Empty(t, events)
+}
