@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -59,6 +60,7 @@ func (f *Fail2BanCollector) GetStatus() (*Fail2BanStatus, error) {
 		}
 		jail, err := f.getJailStatus(name)
 		if err != nil {
+			log.Printf("fail2ban: get jail %q status: %v", name, err)
 			continue
 		}
 		status.Jails = append(status.Jails, *jail)

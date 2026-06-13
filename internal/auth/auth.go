@@ -23,6 +23,9 @@ var (
 // silently truncated, hiding the fact that the rest is unchecked.
 const bcryptMaxPasswordBytes = 72
 
+// MaxEmailBytes is the RFC 5321 maximum length for an email address.
+const MaxEmailBytes = 254
+
 // dummyBcryptHash is compared against on user-not-found login attempts so
 // timing matches the user-found path and prevents email enumeration.
 var dummyBcryptHash = mustGenerateDummyHash()
@@ -62,7 +65,7 @@ func NewService(db *sql.DB, sessionTTLSeconds int) *Service {
 }
 
 func (s *Service) Login(email, password string) (string, error) {
-	if len(email) > 254 {
+	if len(email) > MaxEmailBytes {
 		return "", ErrInvalidCredentials
 	}
 	if len([]byte(password)) > bcryptMaxPasswordBytes {
@@ -143,6 +146,9 @@ func (s *Service) Logout(sid string) error {
 }
 
 func (s *Service) CreateUser(email, password string) error {
+	if len(email) > MaxEmailBytes {
+		return fmt.Errorf("email exceeds %d bytes", MaxEmailBytes)
+	}
 	if len([]byte(password)) > bcryptMaxPasswordBytes {
 		return ErrPasswordTooLong
 	}
@@ -157,6 +163,11 @@ func (s *Service) CreateUser(email, password string) error {
 	}
 
 	return nil
+}
+
+func (s *Service) CleanupExpiredSessions() error {
+	_, err := s.db.Exec("DELETE FROM sessions WHERE expires_at < datetime('now')")
+	return err
 }
 
 func generateSessionID() (string, error) {

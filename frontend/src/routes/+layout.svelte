@@ -64,6 +64,20 @@
 		}
 	}
 
+	async function handleLogin(e: SubmitEvent) {
+		e.preventDefault();
+		loginError = '';
+		const form = e.currentTarget as HTMLFormElement;
+		const data = new FormData(form);
+		try {
+			await api.login(data.get('email') as string, data.get('password') as string);
+			user = await loadUser();
+			loginError = '';
+		} catch (err) {
+			loginError = err instanceof Error ? err.message : 'Sign in failed';
+		}
+	}
+
 	function closeMobileNav() {
 		mobileNavOpen = false;
 		hamburgerBtn?.focus();
@@ -99,19 +113,7 @@
 	<div class="h-screen flex items-center justify-center px-4">
 		<form
 			class="bg-bg-card border border-border rounded-xl p-8 w-full max-w-sm"
-			onsubmit={async (e) => {
-				e.preventDefault();
-				loginError = '';
-				const form = e.currentTarget;
-				const data = new FormData(form);
-				try {
-					await api.login(data.get('email') as string, data.get('password') as string);
-					user = await loadUser();
-					loginError = '';
-				} catch (err) {
-					loginError = err instanceof Error ? err.message : 'Sign in failed';
-				}
-			}}
+			onsubmit={handleLogin}
 		>
 			<h1 class="text-xl font-semibold mb-6 text-center">Dashboard</h1>
 			<label for="login-email" class="sr-only">Email</label>

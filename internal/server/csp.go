@@ -103,6 +103,6 @@ func buildCSP(scriptHashes []string) string {
 		b.WriteString(h)
 		b.WriteString("'")
 	}
-	b.WriteString("; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' wss:; frame-ancestors 'none'")
+	b.WriteString("; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'")
 	return b.String()
 }

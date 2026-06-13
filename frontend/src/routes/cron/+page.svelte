@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api, type CronOccurrence, type CronWeek } from '$lib/api';
 
+	const MINUTES_PER_DAY = 1440;
 	const hours = Array.from({ length: 24 }, (_, hour) => hour);
 	const dayNames = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 	let loadToken = 0;
@@ -68,7 +69,7 @@
 	}
 
 	function occurrenceStyle(occurrence: CronOccurrence) {
-		const top = (occurrence.minutesOfDay / 1440) * 100;
+		const top = (occurrence.minutesOfDay / MINUTES_PER_DAY) * 100;
 		return `top: ${top}%;`;
 	}
 

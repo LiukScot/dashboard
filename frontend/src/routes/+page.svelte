@@ -44,10 +44,9 @@
 		disk: { label: 'Disk', color: '#ffaa22', live: (p) => p.disk, hist: (s) => s.diskPercent },
 		swap: { label: 'Swap', color: '#ff4466', live: (p) => p.swap, hist: (s) => s.swapPercent }
 	};
-	const metricKeys: MetricKey[] = ['cpu', 'mem', 'disk', 'swap'];
 	let selectedMetric = $state<MetricKey>('cpu');
 
-	function swapPercent(s: SystemMetrics | null): number {
+	function swapPercent(s: { swapUsed: number; swapTotal: number } | null): number {
 		if (!s || s.swapTotal <= 0) return 0;
 		return (s.swapUsed / s.swapTotal) * 100;
 	}
@@ -146,6 +145,14 @@
 	}
 
 	onMount(async () => {
+		// Fire Docker in parallel with the critical path so it doesn't run sequentially after
+		const dockerPromise = api.dockerContainers().catch((err: unknown) => {
+			containers = [];
+			dockerError = err instanceof Error ? err.message : 'Failed to load containers';
+			toastError(err, 'Failed to load Docker containers');
+			return null;
+		});
+
 		try {
 			const [sys, hist, netSeed] = await Promise.all([
 				api.systemOverview(),
@@ -162,9 +169,9 @@
 				cpu: h.cpuPercent,
 				mem: h.memPercent,
 				disk: h.diskPercent,
-				swap: h.swapTotal > 0 ? (h.swapUsed / h.swapTotal) * 100 : 0
+				swap: swapPercent(h)
 			}));
-			netHistory = netSeed.slice(-60).map((s) => ({
+			netHistory = netSeed.slice(-netHistoryCap).map((s) => ({
 				time: new Date(s.timestamp * 1000).toLocaleTimeString(),
 				rx: s.netRxRate / 1024,
 				tx: s.netTxRate / 1024
@@ -175,13 +182,10 @@
 			initialLoading = false;
 		}
 
-		try {
-			containers = await api.dockerContainers();
+		const dockerResult = await dockerPromise;
+		if (dockerResult !== null) {
+			containers = dockerResult;
 			dockerError = '';
-		} catch (err) {
-			containers = [];
-			dockerError = err instanceof Error ? err.message : 'Failed to load containers';
-			toastError(err, 'Failed to load Docker containers');
 		}
 
 		// WebSocket for live updates
@@ -196,7 +200,7 @@
 						cpu: s.cpuPercent,
 						mem: s.memPercent,
 						disk: s.diskPercent,
-						swap: s.swapTotal > 0 ? (s.swapUsed / s.swapTotal) * 100 : 0
+						swap: swapPercent(s)
 					}
 				];
 			}

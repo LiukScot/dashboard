@@ -16,6 +16,8 @@ import (
 	"time"
 )
 
+const maxHistoryMessageBytes = 512
+
 type CronCollector struct {
 	db      *sql.DB
 	paths   []string
@@ -304,6 +306,7 @@ func (c *CronCollector) pruneStaleHidden(hidden map[string]bool, current map[str
 		for i, fp := range stale {
 			args[i] = fp
 		}
+		// placeholders are internal fingerprints, not user input — safe to build dynamically
 		if _, err := c.db.Exec(`DELETE FROM cron_hidden_jobs WHERE job_id IN (`+placeholders+`)`, args...); err != nil {
 			log.Printf("prune stale hidden cron jobs: %v", err)
 		}
@@ -664,7 +667,8 @@ func (c *CronCollector) history(start time.Time, end time.Time) ([]CronHistoryIt
 		`SELECT job_id, scheduled_at, observed_at, status, source, message
 		 FROM cron_run_history
 		 WHERE scheduled_at >= ? AND scheduled_at < ?
-		 ORDER BY scheduled_at ASC`,
+		 ORDER BY scheduled_at ASC
+		 LIMIT 5000`,
 		start.Format(time.RFC3339), end.Format(time.RFC3339),
 	)
 	if err != nil {
@@ -694,9 +698,11 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 		byCommand[key] = job
 	}
 
-	if imported, warnings, usedJournal := c.importJournalHistory(byCommand, start, end); usedJournal {
-		return imported, warnings
+	journalImported, journalWarnings, usedJournal := c.importJournalHistory(byCommand, start, end)
+	if usedJournal {
+		return journalImported, journalWarnings
 	}
+	// journalctl failed or unavailable; fall through to syslog path, preserving any error warnings
 
 	logFiles := []string{
 		filepath.Join(c.logPath, "cron"),
@@ -704,7 +710,7 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 		filepath.Join(c.logPath, "messages"),
 	}
 	imported := 0
-	var warnings []string
+	warnings := append([]string(nil), journalWarnings...)
 
 	tx, err := c.db.Begin()
 	if err != nil {
@@ -739,8 +745,8 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 					continue
 				}
 				msg := line
-				if len(msg) > 512 {
-					msg = msg[:512]
+				if len(msg) > maxHistoryMessageBytes {
+					msg = msg[:maxHistoryMessageBytes]
 				}
 				if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", logFile, msg); err != nil {
 					warnings = append(warnings, fmt.Sprintf("insert history %s at %s from %s: %v (line: %q)", job.Fingerprint, observedAt.Format(time.RFC3339), logFile, err, line))
