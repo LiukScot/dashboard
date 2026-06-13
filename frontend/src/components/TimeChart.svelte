@@ -55,7 +55,7 @@
 	const safeSeries = $derived(series.filter((item) => item.data.length > 0));
 	const maxValue = $derived.by(() => {
 		const values = safeSeries.flatMap((item) => item.data);
-		const highest = values.length > 0 ? Math.max(...values) : 0;
+		const highest = values.length > 0 ? values.reduce((a, b) => (b > a ? b : a), 0) : 0;
 		if (highest <= 0) return 1;
 		return Math.ceil(highest * 1.1 * 10) / 10;
 	});

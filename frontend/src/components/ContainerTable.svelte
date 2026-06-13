@@ -15,6 +15,9 @@
 		return statsMap.get(name);
 	}
 
+	const CPU_DANGER_THRESHOLD = 80;
+	const CPU_WARNING_THRESHOLD = 50;
+
 	const stateColors: Record<string, string> = {
 		running: 'bg-success',
 		exited: 'bg-danger',
@@ -47,7 +50,7 @@
 					<td class="py-2 px-3 text-text-dim text-xs truncate max-w-48">{container.image}</td>
 					<td class="py-2 px-3 text-right font-mono text-xs">
 						{#if s}
-							<span class="{s.cpuPercent > 80 ? 'text-danger' : s.cpuPercent > 50 ? 'text-warning' : 'text-text'}">
+							<span class="{s.cpuPercent > CPU_DANGER_THRESHOLD ? 'text-danger' : s.cpuPercent > CPU_WARNING_THRESHOLD ? 'text-warning' : 'text-text'}">
 								{s.cpuPercent.toFixed(1)}%
 							</span>
 						{:else}

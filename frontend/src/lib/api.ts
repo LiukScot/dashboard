@@ -155,7 +155,7 @@ export interface CronWeek {
 	end: string;
 	days: string[];
 	timezone: string;
-	historyCoverage: 'none' | 'partial' | 'good';
+	historyCoverage: 'none' | 'partial';
 	hiddenJobCount: number;
 	jobs: CronJob[];
 	occurrences: CronOccurrence[];

@@ -93,7 +93,7 @@
 			<div class="bg-bg-card border border-border rounded-xl p-4">
 				<h3 class="text-sm font-medium text-text-dim mb-3">Fail2Ban Jails</h3>
 				<div class="space-y-3">
-					{#each f2bStatus.jails as jail}
+					{#each f2bStatus.jails as jail (jail.name)}
 						<div class="border border-border/50 rounded-lg p-3">
 							<div class="flex items-center justify-between mb-2">
 								<span class="font-mono text-sm">{jail.name}</span>
@@ -137,7 +137,7 @@
 							</tr>
 						</thead>
 						<tbody>
-							{#each banEvents as event}
+							{#each banEvents as event (`${event.timestamp}-${event.ip}-${event.action}`)}
 								<tr class="border-b border-border/50">
 									<td class="py-2 px-3 text-text-dim text-xs">{new Date(event.timestamp).toLocaleString()}</td>
 									<td class="py-2 px-3">
@@ -195,7 +195,7 @@
 				</div>
 			</div>
 			<div class="overflow-y-auto max-h-96 font-mono text-xs">
-				{#each logs as entry}
+				{#each logs as entry (`${entry.timestamp}-${entry.message}`)}
 					<div class="flex gap-3 py-1 border-b border-border/30 hover:bg-bg-hover">
 						<span class="text-text-dim shrink-0 w-36">{formatTimestamp(entry.timestamp)}</span>
 						<span class="shrink-0 w-16 {priorityColors[entry.priorityLabel] || 'text-text-dim'}">

@@ -35,11 +35,17 @@ func main() {
 	switch os.Args[1] {
 	case "create":
 		fmt.Print("Email: ")
-		email, _ := reader.ReadString('\n')
+		email, err := reader.ReadString('\n')
+		if err != nil {
+			log.Fatalf("failed to read email: %v", err)
+		}
 		email = strings.TrimSpace(email)
 
 		fmt.Print("Password: ")
-		password, _ := reader.ReadString('\n')
+		password, err := reader.ReadString('\n')
+		if err != nil {
+			log.Fatalf("failed to read password: %v", err)
+		}
 		password = strings.TrimSpace(password)
 
 		if err := authSvc.CreateUser(email, password); err != nil {

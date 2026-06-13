@@ -56,7 +56,7 @@ func (l *LogCollector) GetLogs(unit string, priority int, limit int) ([]LogEntry
 		}
 
 		fullPath := filepath.Join(l.logPath, lf.path)
-		fileEntries, err := readLogFile(fullPath, lf.unitName, priority)
+		fileEntries, err := readLogFile(fullPath, lf.unitName, priority, limit)
 		if err != nil {
 			continue
 		}
@@ -75,14 +75,13 @@ func (l *LogCollector) GetLogs(unit string, priority int, limit int) ([]LogEntry
 	return entries, nil
 }
 
-func readLogFile(path string, unitName string, priorityFilter int) ([]LogEntry, error) {
+func readLogFile(path string, unitName string, priorityFilter int, maxLines int) ([]LogEntry, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
 
-	const maxLines = 500
 	ring := make([]string, maxLines)
 	pos, total := 0, 0
 	scanner := bufio.NewScanner(file)

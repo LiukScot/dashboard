@@ -112,7 +112,23 @@ func (s *Server) routes() {
 func (s *Server) Start(ctx context.Context) error {
 	// Start WebSocket broadcast; ctx cancellation stops the loop and its ticker
 	// on shutdown so neither the goroutine nor the ticker leaks.
-	s.wsHandler.StartBroadcastLoop(ctx, 3*time.Second)
+	done := s.wsHandler.StartBroadcastLoop(ctx, 3*time.Second)
+	defer func() { <-done }()
+
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := s.authSvc.CleanupExpiredSessions(); err != nil {
+					log.Printf("session cleanup: %v", err)
+				}
+			}
+		}
+	}()
 
 	// Initial collection to populate data
 	if _, err := s.sysColl.Collect(); err != nil {
@@ -139,12 +155,28 @@ func (s *Server) Start(ctx context.Context) error {
 const hstsMaxAgeSeconds = 365 * 24 * 3600
 
 const (
-	defaultBanLimit = 50
-	defaultLogLimit = 100
-	maxQueryLimit   = 1000
+	defaultBanLimit    = 50
+	defaultLogLimit    = 100
+	maxQueryLimit      = 1000
+	maxUnitFilterBytes = 128
 )
 
 var cronFingerprintRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+func clampedLimit(r *http.Request, defaultVal int) int {
+	l := r.URL.Query().Get("limit")
+	if l == "" {
+		return defaultVal
+	}
+	n, err := strconv.Atoi(l)
+	if err != nil || n <= 0 {
+		return defaultVal
+	}
+	if n > maxQueryLimit {
+		return maxQueryLimit
+	}
+	return n
+}
 
 // securityHeaders sets baseline response headers that harden the SPA + cookie
 // session against clickjacking, MIME sniffing, and XSS.
@@ -222,7 +254,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		return
 	}
-	if len(body.Email) > 254 {
+	if len(body.Email) > auth.MaxEmailBytes {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid credentials"})
 		return
 	}
@@ -369,15 +401,7 @@ func (s *Server) handleFail2Ban(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFail2BanBans(w http.ResponseWriter, r *http.Request) {
-	limit := defaultBanLimit
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 {
-			limit = n
-		}
-	}
-	if limit > maxQueryLimit {
-		limit = maxQueryLimit
-	}
+	limit := clampedLimit(r, defaultBanLimit)
 
 	events, err := s.f2bColl.GetRecentBans(limit)
 	if err != nil {
@@ -390,7 +414,7 @@ func (s *Server) handleFail2BanBans(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	unit := r.URL.Query().Get("unit")
-	if len(unit) > 128 {
+	if len(unit) > maxUnitFilterBytes {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unit filter too long"})
 		return
 	}
@@ -404,15 +428,7 @@ func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 			priority = n
 		}
 	}
-	limit := defaultLogLimit
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 {
-			limit = n
-		}
-	}
-	if limit > maxQueryLimit {
-		limit = maxQueryLimit
-	}
+	limit := clampedLimit(r, defaultLogLimit)
 
 	entries, err := s.logColl.GetLogs(unit, priority, limit)
 	if err != nil {
@@ -537,7 +553,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
 		// SvelteKit hashes filenames under /_app/immutable/ — safe to cache forever.
 		if strings.HasPrefix(r.URL.Path, "/_app/immutable/") {
-			w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+			w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d, immutable", hstsMaxAgeSeconds))
 		}
 		http.ServeFile(w, r, filePath)
 		return
