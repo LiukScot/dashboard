@@ -17,7 +17,7 @@ func TestReadLogFileReturnsScannerErrors(t *testing.T) {
 		t.Fatalf("write log: %v", err)
 	}
 
-	_, err := readLogFile(logFile, "syslog", -1)
+	_, err := readLogFile(logFile, "syslog", -1, 500)
 	if err == nil {
 		t.Fatal("expected scanner error for oversized log line")
 	}
