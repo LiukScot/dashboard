@@ -776,3 +776,26 @@ func TestHandleFail2BanBansReturnsEmptyWhenNoLogFile(t *testing.T) {
 	require.NoError(t, json.NewDecoder(res.Body).Decode(&events))
 	assert.Empty(t, events)
 }
+
+func TestClampedLimit(t *testing.T) {
+	t.Parallel()
+	const def = 50
+	cases := []struct {
+		name  string
+		query string
+		want  int
+	}{
+		{"absent uses default", "", def},
+		{"non-numeric uses default", "?limit=abc", def},
+		{"zero uses default", "?limit=0", def},
+		{"negative uses default", "?limit=-5", def},
+		{"in range passes through", "?limit=200", 200},
+		{"above max is clamped", "?limit=99999", maxQueryLimit},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/x"+tc.query, nil)
+			assert.Equal(t, tc.want, clampedLimit(req, def))
+		})
+	}
+}
