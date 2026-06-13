@@ -2,6 +2,7 @@ package server
 
 import (
 	"net/http"
+	"net/url"
 	"strings"
 )
 
@@ -23,5 +24,19 @@ func requestOriginAllowed(r *http.Request, allowed map[string]bool) bool {
 		return false
 	}
 
-	return allowed[origin]
+	if allowed[origin] {
+		return true
+	}
+
+	originURL, err := url.Parse(origin)
+	if err != nil {
+		return false
+	}
+
+	requestHost := r.Host
+	if requestHost == "" {
+		return false
+	}
+
+	return strings.EqualFold(originURL.Host, requestHost)
 }
