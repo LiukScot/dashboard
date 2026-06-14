@@ -23,6 +23,11 @@ var (
 // silently truncated, hiding the fact that the rest is unchecked.
 const bcryptMaxPasswordBytes = 72
 
+// bcryptWorkFactor is the bcrypt cost used for new and re-hashed passwords.
+// Higher than bcrypt.DefaultCost (10); older hashes are upgraded lazily on
+// successful login (see rehashIfWeak).
+const bcryptWorkFactor = 12
+
 // MaxEmailBytes is the RFC 5321 maximum length for an email address.
 const MaxEmailBytes = 254
 
@@ -31,7 +36,7 @@ const MaxEmailBytes = 254
 var dummyBcryptHash = mustGenerateDummyHash()
 
 func mustGenerateDummyHash() []byte {
-	h, err := bcrypt.GenerateFromPassword([]byte("dummy-password-for-timing"), bcrypt.DefaultCost)
+	h, err := bcrypt.GenerateFromPassword([]byte("dummy-password-for-timing"), bcryptWorkFactor)
 	if err != nil {
 		panic(fmt.Sprintf("auth: pre-compute dummy hash: %v", err))
 	}
@@ -93,6 +98,8 @@ func (s *Service) Login(email, password string) (string, error) {
 		return "", ErrInvalidCredentials
 	}
 
+	s.rehashIfWeak(user.ID, user.PasswordHash, password)
+
 	sid, err := generateSessionID()
 	if err != nil {
 		return "", fmt.Errorf("generate session id: %w", err)
@@ -108,6 +115,30 @@ func (s *Service) Login(email, password string) (string, error) {
 	}
 
 	return sid, nil
+}
+
+// rehashIfWeak upgrades a stored password hash whose bcrypt cost is below the
+// current work factor. Called only after the password has been verified, so
+// the plaintext is trusted. A failure here must not fail the login (the user
+// authenticated correctly); it is logged and the old hash is kept.
+func (s *Service) rehashIfWeak(userID int64, storedHash, password string) {
+	cost, err := bcrypt.Cost([]byte(storedHash))
+	if err != nil {
+		log.Printf("auth: read bcrypt cost for user %d: %v", userID, err)
+		return
+	}
+	if cost >= bcryptWorkFactor {
+		return
+	}
+
+	newHash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptWorkFactor)
+	if err != nil {
+		log.Printf("auth: re-hash password for user %d: %v", userID, err)
+		return
+	}
+	if _, err := s.db.Exec("UPDATE users SET password_hash = ? WHERE id = ?", string(newHash), userID); err != nil {
+		log.Printf("auth: persist re-hashed password for user %d: %v", userID, err)
+	}
 }
 
 func (s *Service) ValidateSession(sid string) (*User, error) {
@@ -152,7 +183,7 @@ func (s *Service) CreateUser(email, password string) error {
 	if len([]byte(password)) > bcryptMaxPasswordBytes {
 		return ErrPasswordTooLong
 	}
-	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcrypt.DefaultCost)
+	hash, err := bcrypt.GenerateFromPassword([]byte(password), bcryptWorkFactor)
 	if err != nil {
 		return fmt.Errorf("hash password: %w", err)
 	}

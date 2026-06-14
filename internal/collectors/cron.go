@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
@@ -156,6 +157,7 @@ func (c *CronCollector) Week(start time.Time) (CronWeek, error) {
 	if warnings == nil {
 		warnings = []string{}
 	}
+	warnings = sanitizeWarnings(warnings)
 	historyByOccurrence := map[string]CronHistoryItem{}
 	for _, item := range history {
 		historyByOccurrence[item.JobID+"\x00"+item.ScheduledAt] = item
@@ -894,6 +896,39 @@ func txInsertHistory(tx *sql.Tx, jobID string, observedAt time.Time, status stri
 
 func historyKey(user string, command string) string {
 	return strings.TrimSpace(user) + "\x00" + strings.TrimSpace(command)
+}
+
+// rawLogLineSuffix matches the ` (line: "...")` fragment that some warnings
+// append to surface the offending log entry while debugging. That fragment is
+// a verbatim journalctl/syslog line — it can carry usernames, full commands,
+// and free-text message bodies — so it is stripped before the warning leaves
+// the server (AGENTS.md §10: no PII in API output).
+var rawLogLineSuffix = regexp.MustCompile(` \(line: ".*"\)$`)
+
+// absolutePathRe matches POSIX absolute paths so they can be reduced to their
+// basename. Exposing full filesystem layout to the browser leaks host
+// structure (which dirs exist, where spools/configs live).
+var absolutePathRe = regexp.MustCompile(`/[^\s:()"]+`)
+
+// sanitizeWarning strips PII and host-path detail from a single cron warning
+// while keeping the diagnostic shape (what failed, which kind of source).
+func sanitizeWarning(warning string) string {
+	warning = rawLogLineSuffix.ReplaceAllString(warning, "")
+	return absolutePathRe.ReplaceAllStringFunc(warning, func(path string) string {
+		base := filepath.Base(path)
+		if base == "" || base == "." || base == "/" {
+			return path
+		}
+		return base
+	})
+}
+
+func sanitizeWarnings(warnings []string) []string {
+	out := make([]string, len(warnings))
+	for i, w := range warnings {
+		out[i] = sanitizeWarning(w)
+	}
+	return out
 }
 
 func dayKeys(start time.Time, count int) []string {
