@@ -34,6 +34,8 @@ type StatsStreamer struct {
 	// now is overridable in tests to control staleness/backoff timing.
 	now func() time.Time
 
+	// Lock ordering: always StatsStreamer.mu before statsStream.mu, never the
+	// reverse, to avoid deadlock when reconcile holds st.mu and inspects a stream.
 	mu      sync.Mutex
 	streams map[string]*statsStream
 }
