@@ -320,3 +320,30 @@ func TestQueryFiltersByDuration(t *testing.T) {
 	require.Len(t, out, 1)
 	assert.InDelta(t, 11.0, out[0].CPUPercent, 0.01)
 }
+
+func TestQueryBoundsResultToMaxHistoryRows(t *testing.T) {
+	db := newHistoryTestDB(t)
+	h := &SystemHistory{db: db}
+
+	now := time.Now().Unix()
+	// Insert more 1m samples inside the window than the bound allows. Each ts
+	// is a distinct minute so dedupe does not collapse them.
+	overflow := maxHistoryRows + 50
+	for i := 0; i < overflow; i++ {
+		insertSample(t, db, now-int64(i*60), resolution1m, float64(i))
+	}
+
+	samples, err := h.Query(60 * 24 * time.Hour)
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(samples), maxHistoryRows, "result must be bounded")
+
+	// Ascending order is the chart contract.
+	for i := 1; i < len(samples); i++ {
+		assert.LessOrEqual(t, samples[i-1].Timestamp, samples[i].Timestamp, "ascending order")
+	}
+
+	// The kept rows must be the newest ones (DESC+LIMIT then ASC), so the last
+	// sample is the most recent (i==0 insert, timestamp == now).
+	assert.Equal(t, now, samples[len(samples)-1].Timestamp, "newest sample retained")
+}
