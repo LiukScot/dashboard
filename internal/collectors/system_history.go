@@ -31,6 +31,16 @@ const (
 	secondsPerDay  = 86400
 	bucket5mSecs   = 5 * 60
 	bucket1hSecs   = secondsPerHour
+
+	// maxHistoryRows bounds a single Query() to the number of samples the
+	// retention policy can legitimately keep: 1m for 24h, 5m for 7d, 1h for
+	// 30d, with headroom for the brief overlap before downsampling runs. It
+	// stops a stalled retention loop (or an over-wide range) from loading
+	// tens of thousands of rows into memory at once (AGENTS.md §12).
+	maxHistoryRows = (retain1mHours * 60) +
+		(retain5mDays * 24 * (secondsPerHour / bucket5mSecs)) +
+		(retain1hDays * 24) +
+		1000
 )
 
 type SystemHistory struct {
@@ -218,13 +228,22 @@ func (h *SystemHistory) downsample(srcRes, dstRes string, cutoff, bucketSec int6
 func (h *SystemHistory) Query(rangeDur time.Duration) ([]HistorySample, error) {
 	since := time.Now().Add(-rangeDur).Unix()
 
+	// Bound the scan to the newest maxHistoryRows so a stalled retention loop
+	// can't pull tens of thousands of rows into memory; the inner DESC+LIMIT
+	// keeps the most recent samples, the outer ASC restores chart order.
 	rows, err := h.db.Query(
 		`SELECT timestamp, resolution, cpu_percent, mem_percent, disk_percent,
 				swap_percent, net_rx_rate, net_tx_rate, load_avg_1
-		   FROM metrics_history
-		  WHERE timestamp >= ?
+		   FROM (
+				SELECT timestamp, resolution, cpu_percent, mem_percent, disk_percent,
+					   swap_percent, net_rx_rate, net_tx_rate, load_avg_1
+				  FROM metrics_history
+				 WHERE timestamp >= ?
+				 ORDER BY timestamp DESC
+				 LIMIT ?
+		   )
 		  ORDER BY timestamp ASC`,
-		since,
+		since, maxHistoryRows,
 	)
 	if err != nil {
 		return nil, err

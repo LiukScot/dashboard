@@ -29,6 +29,7 @@ func main() {
 	sysColl := collectors.NewSystemCollector(cfg.ProcPath)
 	sysHist := collectors.NewSystemHistory(database, sysColl, time.Duration(cfg.MetricsInterval)*time.Second)
 	dockerColl := collectors.NewDockerCollector(cfg.DockerSocket)
+	defer dockerColl.Close()
 	f2bColl := collectors.NewFail2BanCollector(cfg.LogPath)
 	logColl := collectors.NewLogCollector(cfg.LogPath)
 	cronColl := collectors.NewCronCollector(database, cfg.CronPaths, cfg.LogPath)
