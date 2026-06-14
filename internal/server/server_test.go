@@ -60,6 +60,85 @@ func loginUser(t *testing.T, srv *Server, email, password string) string {
 
 // --- /api/v1/auth/login -----------------------------------------------------
 
+// freePort reserves an ephemeral port and releases it, returning a port that is
+// free at this instant. Good enough for a single-shot start/stop test.
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := l.Addr().(*net.TCPAddr).Port
+	require.NoError(t, l.Close())
+	return port
+}
+
+// TestStartShutsDownOnContextCancel proves the graceful-shutdown wiring: Start
+// blocks while serving, and a cancelled context makes it drain and return nil
+// (not block forever, not error). This is what lets main()'s deferred cleanup
+// run instead of being skipped by an os.Exit.
+func TestStartShutsDownOnContextCancel(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Host: "127.0.0.1", Port: freePort(t), SessionTTL: 3600}
+	srv := startTestServer(t, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+
+	// Give the listener a moment to bind, then signal shutdown.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(shutdownTimeout + 2*time.Second):
+		t.Fatal("Start did not return after context cancel")
+	}
+}
+
+// startTestServer builds the minimal Server that Start touches.
+func startTestServer(t *testing.T, cfg *config.Config) *Server {
+	t.Helper()
+	hub := NewHub()
+	srv := &Server{
+		cfg:        cfg,
+		authSvc:    auth.NewService(nil, cfg.SessionTTL),
+		sysColl:    collectors.NewSystemCollector(""),
+		dockerColl: collectors.NewDockerCollector(""),
+		mux:        http.NewServeMux(),
+		startedAt:  time.Now(),
+	}
+	srv.wsHandler = NewWSHandler(hub, srv.authSvc, srv.sysColl, srv.dockerColl, cfg)
+	return srv
+}
+
+// TestStartReturnsErrorWhenPortBound proves Start returns the bind error
+// instead of hanging. The broadcast loop only stops on ctx cancel, so Start
+// must cancel its own derived context on the serve-failure path; otherwise the
+// <-done join would deadlock and Start would never return.
+func TestStartReturnsErrorWhenPortBound(t *testing.T) {
+	t.Parallel()
+
+	blocker, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = blocker.Close() })
+	port := blocker.Addr().(*net.TCPAddr).Port
+
+	cfg := &config.Config{Host: "127.0.0.1", Port: port, SessionTTL: 3600}
+	srv := startTestServer(t, cfg)
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(context.Background()) }()
+
+	select {
+	case err := <-errCh:
+		require.Error(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start hung on bind failure instead of returning the error")
+	}
+}
+
 func TestHandleLoginRejectsOversizedBody(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, nil, nil)

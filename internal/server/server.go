@@ -110,10 +110,19 @@ func (s *Server) routes() {
 }
 
 func (s *Server) Start(ctx context.Context) error {
+	// Cancel on every return path (graceful shutdown OR serve failure) so the
+	// broadcast loop and cleanup goroutine always stop. The cancel must run
+	// before the <-done join, otherwise a serve failure (ctx not yet cancelled
+	// by the caller) would block forever waiting on a loop that never exits.
+	ctx, cancel := context.WithCancel(ctx)
+
 	// Start WebSocket broadcast; ctx cancellation stops the loop and its ticker
 	// on shutdown so neither the goroutine nor the ticker leaks.
 	done := s.wsHandler.StartBroadcastLoop(ctx, 3*time.Second)
-	defer func() { <-done }()
+	defer func() {
+		cancel()
+		<-done
+	}()
 
 	go func() {
 		ticker := time.NewTicker(time.Hour)
@@ -149,8 +158,33 @@ func (s *Server) Start(ctx context.Context) error {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	return srv.ListenAndServe()
+
+	// ListenAndServe blocks until the server stops, so run it in a goroutine and
+	// select against ctx so a cancelled root context triggers a graceful drain.
+	serveErr := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serveErr <- err
+			return
+		}
+		serveErr <- nil
+	}()
+
+	select {
+	case err := <-serveErr:
+		// Server stopped on its own (bind failure or crash) before shutdown.
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("graceful shutdown: %w", err)
+		}
+		return nil
+	}
 }
+
+const shutdownTimeout = 15 * time.Second
 
 const hstsMaxAgeSeconds = 365 * 24 * 3600
 
