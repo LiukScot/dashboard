@@ -678,7 +678,7 @@ func TestRequestOriginAllowedAllowsConfiguredOrigin(t *testing.T) {
 	req.Header.Set("Origin", "http://localhost:5173")
 
 	allowed := parseAllowedOrigins("http://localhost:4200,http://localhost:5173")
-	assert.True(t, requestOriginAllowed(req, allowed))
+	assert.True(t, requestOriginAllowed(req, allowed, false))
 }
 
 func TestRequestOriginAllowedAllowsSameHostOrigin(t *testing.T) {
@@ -688,7 +688,7 @@ func TestRequestOriginAllowedAllowsSameHostOrigin(t *testing.T) {
 	req.Header.Set("Origin", "http://100.75.217.127:4200")
 
 	allowed := parseAllowedOrigins("http://localhost:4200,http://127.0.0.1:4200")
-	assert.True(t, requestOriginAllowed(req, allowed))
+	assert.True(t, requestOriginAllowed(req, allowed, false))
 }
 
 func TestRequestOriginAllowedRejectsOtherOrigin(t *testing.T) {
@@ -698,14 +698,14 @@ func TestRequestOriginAllowedRejectsOtherOrigin(t *testing.T) {
 	req.Header.Set("Origin", "http://evil.example")
 
 	allowed := parseAllowedOrigins("http://localhost:4200,http://localhost:5173")
-	assert.False(t, requestOriginAllowed(req, allowed))
+	assert.False(t, requestOriginAllowed(req, allowed, false))
 }
 
 func TestRequestOriginAllowedRejectsEmptyOrigin(t *testing.T) {
 	t.Parallel()
 	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
 	allowed := parseAllowedOrigins("http://localhost:4200")
-	assert.False(t, requestOriginAllowed(req, allowed))
+	assert.False(t, requestOriginAllowed(req, allowed, false))
 }
 
 func TestRequestOriginAllowedRejectsMalformedOrigin(t *testing.T) {
@@ -716,7 +716,7 @@ func TestRequestOriginAllowedRejectsMalformedOrigin(t *testing.T) {
 	req.Header.Set("Origin", "http://\x7f.example")
 
 	allowed := parseAllowedOrigins("http://localhost:4200")
-	assert.False(t, requestOriginAllowed(req, allowed))
+	assert.False(t, requestOriginAllowed(req, allowed, false))
 }
 
 func TestParseAllowedOriginsIgnoresBlanks(t *testing.T) {

@@ -68,6 +68,10 @@ var migrations = []string{
 	// index allows SQLite to use a range scan instead of a full table scan.
 	`CREATE INDEX IF NOT EXISTS idx_metrics_history_ts
 		ON metrics_history(timestamp)`,
+	// CleanupExpiredSessions deletes by expires_at; without this index the
+	// hourly cleanup and ValidateSession expiry check both do full table scans.
+	`CREATE INDEX IF NOT EXISTS idx_sessions_expires_at
+		ON sessions(expires_at)`,
 }
 
-const SchemaVersion = 7
+const SchemaVersion = 8
