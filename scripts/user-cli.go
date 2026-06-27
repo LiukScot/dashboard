@@ -71,6 +71,9 @@ func main() {
 			}
 			fmt.Printf("%-4d %-30s %s\n", id, email, createdAt)
 		}
+		if err := rows.Err(); err != nil {
+			log.Fatalf("list users: %v", err)
+		}
 
 	default:
 		fmt.Printf("Unknown command: %s\n", os.Args[1])

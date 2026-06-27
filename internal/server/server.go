@@ -75,7 +75,7 @@ func New(cfg *config.Config, authSvc *auth.Service,
 func (s *Server) routes() {
 	// Auth routes (no middleware)
 	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
-	s.mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
+	s.mux.HandleFunc("POST /api/v1/auth/logout", s.withAuth(s.handleLogout))
 	s.mux.HandleFunc("GET /api/v1/auth/session", s.handleSession)
 	s.mux.HandleFunc("GET /api/v1/auth/me", s.withAuth(s.handleMe))
 
@@ -188,6 +188,15 @@ const shutdownTimeout = 15 * time.Second
 
 const hstsMaxAgeSeconds = 365 * 24 * 3600
 
+// immutableCacheMaxAgeSeconds is the Cache-Control max-age for hashed static
+// assets. Independent from hstsMaxAgeSeconds — changing HSTS duration must not
+// silently alter the asset cache TTL.
+const immutableCacheMaxAgeSeconds = 365 * 24 * 3600
+
+// cronWeekMaxLookbackDays caps the ?start query parameter to prevent a distant
+// past date from triggering a very large journalctl scan.
+const cronWeekMaxLookbackDays = 90
+
 const (
 	defaultBanLimit    = 50
 	defaultLogLimit    = 100
@@ -238,7 +247,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if requestOriginAllowed(r, allowed) {
+		if requestOriginAllowed(r, allowed, s.cfg.CookieSecure) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -488,6 +497,10 @@ func (s *Server) handleCronWeek(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid start date"})
 			return
 		}
+		earliest := time.Now().AddDate(0, 0, -cronWeekMaxLookbackDays)
+		if parsed.Before(earliest) {
+			parsed = earliest
+		}
 		start = parsed
 	}
 
@@ -587,7 +600,7 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 	if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
 		// SvelteKit hashes filenames under /_app/immutable/ — safe to cache forever.
 		if strings.HasPrefix(r.URL.Path, "/_app/immutable/") {
-			w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d, immutable", hstsMaxAgeSeconds))
+			w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d, immutable", immutableCacheMaxAgeSeconds))
 		}
 		http.ServeFile(w, r, filePath)
 		return

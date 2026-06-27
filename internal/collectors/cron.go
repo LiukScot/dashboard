@@ -19,6 +19,10 @@ import (
 
 const maxHistoryMessageBytes = 512
 
+// maxHistoryQueryRows bounds the number of history rows returned per week
+// query so a large DB cannot cause unbounded memory allocation.
+const maxHistoryQueryRows = 5000
+
 type CronCollector struct {
 	db      *sql.DB
 	paths   []string
@@ -670,8 +674,8 @@ func (c *CronCollector) history(start time.Time, end time.Time) ([]CronHistoryIt
 		 FROM cron_run_history
 		 WHERE scheduled_at >= ? AND scheduled_at < ?
 		 ORDER BY scheduled_at ASC
-		 LIMIT 5000`,
-		start.Format(time.RFC3339), end.Format(time.RFC3339),
+		 LIMIT ?`,
+		start.Format(time.RFC3339), end.Format(time.RFC3339), maxHistoryQueryRows,
 	)
 	if err != nil {
 		return nil, err
@@ -736,6 +740,7 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 		func() {
 			defer func() { _ = file.Close() }()
 			scanner := bufio.NewScanner(file)
+			scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 			for scanner.Scan() {
 				line := scanner.Text()
 				observedAt, user, command, ok := parseCronLogLine(line, reference)
@@ -750,7 +755,7 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 				if len(msg) > maxHistoryMessageBytes {
 					msg = msg[:maxHistoryMessageBytes]
 				}
-				if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", logFile, msg); err != nil {
+				if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", filepath.Base(logFile), msg); err != nil {
 					warnings = append(warnings, fmt.Sprintf("insert history %s at %s from %s: %v (line: %q)", job.Fingerprint, observedAt.Format(time.RFC3339), logFile, err, line))
 				} else {
 					imported++
@@ -811,8 +816,10 @@ func (c *CronCollector) importJournalHistory(byCommand map[string]CronJob, start
 	imported := 0
 	var warnings []string
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
-		observedAt, user, command, ok := parseCronLogLine(scanner.Text(), end.Add(-time.Second))
+		line := scanner.Text()
+		observedAt, user, command, ok := parseCronLogLine(line, end.Add(-time.Second))
 		if !ok || observedAt.Before(start) || !observedAt.Before(end) {
 			continue
 		}
@@ -820,8 +827,12 @@ func (c *CronCollector) importJournalHistory(byCommand map[string]CronJob, start
 		if !exists {
 			continue
 		}
-		if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", "journalctl", scanner.Text()); err != nil {
-			warnings = append(warnings, fmt.Sprintf("insert history %s at %s from journalctl: %v (line: %q)", job.Fingerprint, observedAt.Format(time.RFC3339), err, scanner.Text()))
+		msg := line
+		if len(msg) > maxHistoryMessageBytes {
+			msg = msg[:maxHistoryMessageBytes]
+		}
+		if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", "journalctl", msg); err != nil {
+			warnings = append(warnings, fmt.Sprintf("insert history %s at %s from journalctl: %v (line: %q)", job.Fingerprint, observedAt.Format(time.RFC3339), err, line))
 		} else {
 			imported++
 		}

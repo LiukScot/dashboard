@@ -18,7 +18,11 @@ func parseAllowedOrigins(origins string) map[string]bool {
 	return allowed
 }
 
-func requestOriginAllowed(r *http.Request, allowed map[string]bool) bool {
+// requestOriginAllowed returns true when the request Origin header is either in
+// the explicit allowlist or matches the same host as the server. When
+// requireHTTPS is true the same-host fallback additionally rejects http: origins
+// to prevent cross-protocol requests when the app is running behind TLS.
+func requestOriginAllowed(r *http.Request, allowed map[string]bool, requireHTTPS bool) bool {
 	origin := strings.TrimSpace(r.Header.Get("Origin"))
 	if origin == "" {
 		return false
@@ -38,5 +42,11 @@ func requestOriginAllowed(r *http.Request, allowed map[string]bool) bool {
 		return false
 	}
 
-	return strings.EqualFold(originURL.Host, requestHost)
+	if !strings.EqualFold(originURL.Host, requestHost) {
+		return false
+	}
+	if requireHTTPS && originURL.Scheme != "https" {
+		return false
+	}
+	return true
 }

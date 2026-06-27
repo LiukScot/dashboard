@@ -63,9 +63,24 @@
 		return week?.days ?? Array.from({ length: 7 }, (_, index) => toDateInput(addDays(weekStart, index)));
 	}
 
+	// Pre-group occurrences by dayKey so each column lookup is O(1) instead of
+	// scanning the full occurrence list for every day in the 7-column render loop.
+	const occurrencesByDay = $derived.by(() => {
+		const map = new Map<string, CronOccurrence[]>();
+		if (!week) return map;
+		for (const occ of week.occurrences) {
+			const list = map.get(occ.dayKey);
+			if (list) {
+				list.push(occ);
+			} else {
+				map.set(occ.dayKey, [occ]);
+			}
+		}
+		return map;
+	});
+
 	function occurrencesForDay(dayKey: string) {
-		if (!week) return [];
-		return week.occurrences.filter((occurrence) => occurrence.dayKey === dayKey);
+		return occurrencesByDay.get(dayKey) ?? [];
 	}
 
 	function occurrenceStyle(occurrence: CronOccurrence) {

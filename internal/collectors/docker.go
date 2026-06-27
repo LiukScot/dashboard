@@ -7,10 +7,21 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
 const dockerAPIVersion = "v1.43"
+
+// dockerShortIDLen is the length of the abbreviated container ID returned by
+// Docker's list endpoint (first 12 hex chars of the full SHA-256 ID).
+const dockerShortIDLen = 12
+
+// trimContainerName strips the leading "/" that Docker prepends to container
+// names in the list and stats endpoints.
+func trimContainerName(name string) string {
+	return strings.TrimPrefix(name, "/")
+}
 
 type Container struct {
 	ID      string            `json:"id"`
@@ -105,10 +116,7 @@ func (d *DockerCollector) ListContainers() ([]Container, error) {
 	for i, c := range raw {
 		name := ""
 		if len(c.Names) > 0 {
-			name = c.Names[0]
-			if len(name) > 0 && name[0] == '/' {
-				name = name[1:]
-			}
+			name = trimContainerName(c.Names[0])
 		}
 
 		ports := make([]ContainerPort, len(c.Ports))
@@ -122,8 +130,8 @@ func (d *DockerCollector) ListContainers() ([]Container, error) {
 		}
 
 		id := c.Id
-		if len(id) > 12 {
-			id = id[:12]
+		if len(id) > dockerShortIDLen {
+			id = id[:dockerShortIDLen]
 		}
 
 		containers[i] = Container{
@@ -142,7 +150,7 @@ func (d *DockerCollector) ListContainers() ([]Container, error) {
 }
 
 func isValidContainerID(id string) bool {
-	if len(id) != 12 {
+	if len(id) != dockerShortIDLen {
 		return false
 	}
 	for _, c := range id {
@@ -201,10 +209,7 @@ func (raw rawContainerStats) toContainerStats(containerID string) ContainerStats
 		netTx += n.TxBytes
 	}
 
-	name := raw.Name
-	if len(name) > 0 && name[0] == '/' {
-		name = name[1:]
-	}
+	name := trimContainerName(raw.Name)
 
 	memPercent := 0.0
 	if raw.MemoryStats.Limit > 0 {

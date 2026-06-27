@@ -47,7 +47,7 @@ export const api = {
 		params.set('limit', String(limit));
 		return request<LogEntry[]>(`/api/v1/security/logs?${params}`);
 	},
-	cronWeek: (start: string) => request<CronWeek>(`/api/v1/cron/week?start=${start}`),
+	cronWeek: (start: string) => request<CronWeek>(`/api/v1/cron/week?start=${encodeURIComponent(start)}`),
 	hideCronJob: (fingerprint: string) =>
 		request<{ status: string }>(`/api/v1/cron/jobs/${encodeURIComponent(fingerprint)}/hide`, {
 			method: 'POST'
