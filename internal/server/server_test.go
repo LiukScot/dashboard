@@ -856,6 +856,50 @@ func TestHandleFail2BanBansReturnsEmptyWhenNoLogFile(t *testing.T) {
 	assert.Empty(t, events)
 }
 
+func TestHandleSystemHistoryReturnsSamples(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "dashboard.sqlite")
+	database, err := db.Open(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+	require.NoError(t, db.RunMigrations(database))
+
+	_, err = database.Exec(
+		`INSERT INTO metrics_history (timestamp, resolution, cpu_percent, mem_percent, disk_percent, swap_percent, net_rx_rate, net_tx_rate, load_avg_1) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		time.Now().Unix(), "1m", 42.0, 55.0, 30.0, 0.0, 100.0, 50.0, 1.2,
+	)
+	require.NoError(t, err)
+
+	srv := newTestServer(t, nil, func(s *Server) {
+		s.sysHist = collectors.NewSystemHistory(database, nil, time.Minute)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/history?range=24h", nil)
+	res := httptest.NewRecorder()
+	srv.handleSystemHistory(res, req)
+
+	assert.Equal(t, http.StatusOK, res.Code)
+	var samples []map[string]any
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&samples))
+	assert.NotEmpty(t, samples)
+}
+
+func TestHandleFail2BanStatusNullWhenUnavailable(t *testing.T) {
+	// Not parallel: modifies process PATH via t.Setenv.
+	t.Setenv("PATH", t.TempDir())
+
+	srv := newTestServer(t, nil, func(s *Server) {
+		s.f2bColl = collectors.NewFail2BanCollector(t.TempDir())
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/security/fail2ban", nil)
+	res := httptest.NewRecorder()
+	srv.handleFail2Ban(res, req)
+
+	assert.Equal(t, http.StatusOK, res.Code)
+	assert.Equal(t, "null\n", res.Body.String())
+}
+
 func TestClampedLimit(t *testing.T) {
 	t.Parallel()
 	const def = 50
