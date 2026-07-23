@@ -11,9 +11,13 @@
 	} from '$lib/api';
 	import { subscribe, type MetricsMessage } from '$lib/ws';
 	import { toastError } from '$lib/stores/toast.svelte';
+	import { formatBytes, round1dp, BYTES_PER_KB } from '$lib/format';
 	import GaugeRing from '../components/GaugeRing.svelte';
-	import TimeChart from '../components/TimeChart.svelte';
 	import ContainerTable from '../components/ContainerTable.svelte';
+
+	// ECharts is heavy (~552 KB); load TimeChart lazily so it lands in its own
+	// chunk (see vite.config.ts manualChunks) instead of the main route bundle.
+	const timeChart = import('../components/TimeChart.svelte');
 
 	let system = $state<SystemMetrics | null>(null);
 	let network = $state<NetworkMetrics[]>([]);
@@ -24,6 +28,9 @@
 	type LivePoint = { time: string; cpu: number; mem: number; disk: number; swap: number };
 	let liveHistory = $state<LivePoint[]>([]);
 	let netHistory = $state<{ time: string; rx: number; tx: number }[]>([]);
+
+	const liveHistoryCap = 120;
+	const netHistoryCap = 60;
 
 	type MetricKey = 'cpu' | 'mem' | 'disk' | 'swap';
 	const metrics: Record<MetricKey, {
@@ -37,10 +44,9 @@
 		disk: { label: 'Disk', color: '#ffaa22', live: (p) => p.disk, hist: (s) => s.diskPercent },
 		swap: { label: 'Swap', color: '#ff4466', live: (p) => p.swap, hist: (s) => s.swapPercent }
 	};
-	const metricKeys: MetricKey[] = ['cpu', 'mem', 'disk', 'swap'];
 	let selectedMetric = $state<MetricKey>('cpu');
 
-	function swapPercent(s: SystemMetrics | null): number {
+	function swapPercent(s: { swapUsed: number; swapTotal: number } | null): number {
 		if (!s || s.swapTotal <= 0) return 0;
 		return (s.swapUsed / s.swapTotal) * 100;
 	}
@@ -66,8 +72,8 @@
 	const metricChartSeries = $derived.by(() => {
 		const m = metrics[selectedMetric];
 		const data = historyLive
-			? liveHistory.map((p) => Math.round(m.live(p) * 10) / 10)
-			: historySamples.map((s) => Math.round(m.hist(s) * 10) / 10);
+			? liveHistory.map((p) => round1dp(m.live(p)))
+			: historySamples.map((s) => round1dp(m.hist(s)));
 		return [{ name: `${m.label} %`, data, color: m.color }];
 	});
 	const netChartLabels = $derived(
@@ -80,24 +86,24 @@
 			? [
 					{
 						name: 'Download',
-						data: netHistory.map((h) => Math.round(h.rx * 10) / 10),
+						data: netHistory.map((h) => round1dp(h.rx)),
 						color: '#4488ff'
 					},
 					{
 						name: 'Upload',
-						data: netHistory.map((h) => Math.round(h.tx * 10) / 10),
+						data: netHistory.map((h) => round1dp(h.tx)),
 						color: '#00d4aa'
 					}
 				]
 			: [
 					{
 						name: 'Download',
-						data: historySamples.map((s) => Math.round((s.netRxRate / 1024) * 10) / 10),
+						data: historySamples.map((s) => round1dp(s.netRxRate / BYTES_PER_KB)),
 						color: '#4488ff'
 					},
 					{
 						name: 'Upload',
-						data: historySamples.map((s) => Math.round((s.netTxRate / 1024) * 10) / 10),
+						data: historySamples.map((s) => round1dp(s.netTxRate / BYTES_PER_KB)),
 						color: '#00d4aa'
 					}
 				]
@@ -139,6 +145,14 @@
 	}
 
 	onMount(async () => {
+		// Fire Docker in parallel with the critical path so it doesn't run sequentially after
+		const dockerPromise = api.dockerContainers().catch((err: unknown) => {
+			containers = [];
+			dockerError = err instanceof Error ? err.message : 'Failed to load containers';
+			toastError(err, 'Failed to load Docker containers');
+			return null;
+		});
+
 		try {
 			const [sys, hist, netSeed] = await Promise.all([
 				api.systemOverview(),
@@ -155,12 +169,12 @@
 				cpu: h.cpuPercent,
 				mem: h.memPercent,
 				disk: h.diskPercent,
-				swap: h.swapTotal > 0 ? (h.swapUsed / h.swapTotal) * 100 : 0
+				swap: swapPercent(h)
 			}));
-			netHistory = netSeed.slice(-60).map((s) => ({
+			netHistory = netSeed.slice(-netHistoryCap).map((s) => ({
 				time: new Date(s.timestamp * 1000).toLocaleTimeString(),
-				rx: s.netRxRate / 1024,
-				tx: s.netTxRate / 1024
+				rx: s.netRxRate / BYTES_PER_KB,
+				tx: s.netTxRate / BYTES_PER_KB
 			}));
 		} catch (err) {
 			toastError(err, 'Failed to load system overview');
@@ -168,13 +182,10 @@
 			initialLoading = false;
 		}
 
-		try {
-			containers = await api.dockerContainers();
+		const dockerResult = await dockerPromise;
+		if (dockerResult !== null) {
+			containers = dockerResult;
 			dockerError = '';
-		} catch (err) {
-			containers = [];
-			dockerError = err instanceof Error ? err.message : 'Failed to load containers';
-			toastError(err, 'Failed to load Docker containers');
 		}
 
 		// WebSocket for live updates
@@ -183,13 +194,13 @@
 				system = msg.system;
 				const s = msg.system;
 				liveHistory = [
-					...liveHistory.slice(-119),
+					...liveHistory.slice(-(liveHistoryCap - 1)),
 					{
 						time: new Date(s.timestamp).toLocaleTimeString(),
 						cpu: s.cpuPercent,
 						mem: s.memPercent,
 						disk: s.diskPercent,
-						swap: s.swapTotal > 0 ? (s.swapUsed / s.swapTotal) * 100 : 0
+						swap: swapPercent(s)
 					}
 				];
 			}
@@ -200,11 +211,11 @@
 					{ rx: 0, tx: 0 }
 				);
 				netHistory = [
-					...netHistory.slice(-59),
+					...netHistory.slice(-(netHistoryCap - 1)),
 					{
 						time: new Date().toLocaleTimeString(),
-						rx: total.rx / 1024,
-						tx: total.tx / 1024
+						rx: total.rx / BYTES_PER_KB,
+						tx: total.tx / BYTES_PER_KB
 					}
 				];
 			}
@@ -216,22 +227,28 @@
 		unsubscribeWs?.();
 	});
 
+	const SECONDS_PER_DAY = 86400;
+	const SECONDS_PER_HOUR = 3600;
+	const SECONDS_PER_MINUTE = 60;
+
 	function formatUptime(seconds: number): string {
-		const d = Math.floor(seconds / 86400);
-		const h = Math.floor((seconds % 86400) / 3600);
-		const m = Math.floor((seconds % 3600) / 60);
+		const d = Math.floor(seconds / SECONDS_PER_DAY);
+		const h = Math.floor((seconds % SECONDS_PER_DAY) / SECONDS_PER_HOUR);
+		const m = Math.floor((seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE);
 		if (d > 0) return `${d}d ${h}h ${m}m`;
 		if (h > 0) return `${h}h ${m}m`;
 		return `${m}m`;
 	}
 
-	function formatBytes(bytes: number): string {
-		if (bytes <= 0) return '0 B';
-		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-		return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
-	}
 </script>
+
+{#snippet chartSkeleton()}
+	<div
+		class="h-64 w-full animate-pulse rounded-lg bg-bg-hover"
+		role="status"
+		aria-label="Loading chart"
+	></div>
+{/snippet}
 
 <div class="space-y-6">
 	{#if initialLoading}
@@ -319,22 +336,30 @@
 	<!-- Charts -->
 	<div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
 		<div class="bg-bg-card border border-border rounded-xl p-4">
-			<TimeChart
-				title={`${metrics[selectedMetric].label} ${historyLive ? '(live)' : `(${historyRange})`}`}
-				labels={metricChartLabels}
-				series={metricChartSeries}
-				yAxisLabel="%"
-				zoomable={!historyLive}
-			/>
+			{#await timeChart}
+				{@render chartSkeleton()}
+			{:then { default: TimeChart }}
+				<TimeChart
+					title={`${metrics[selectedMetric].label} ${historyLive ? '(live)' : `(${historyRange})`}`}
+					labels={metricChartLabels}
+					series={metricChartSeries}
+					yAxisLabel="%"
+					zoomable={!historyLive}
+				/>
+			{/await}
 		</div>
 		<div class="bg-bg-card border border-border rounded-xl p-4">
-			<TimeChart
-				title={historyLive ? 'Network Bandwidth (live)' : `Network Bandwidth (${historyRange})`}
-				labels={netChartLabels}
-				series={netChartSeries}
-				yAxisLabel="KB/s"
-				zoomable={!historyLive}
-			/>
+			{#await timeChart}
+				{@render chartSkeleton()}
+			{:then { default: TimeChart }}
+				<TimeChart
+					title={historyLive ? 'Network Bandwidth (live)' : `Network Bandwidth (${historyRange})`}
+					labels={netChartLabels}
+					series={netChartSeries}
+					yAxisLabel="KB/s"
+					zoomable={!historyLive}
+				/>
+			{/await}
 		</div>
 	</div>
 

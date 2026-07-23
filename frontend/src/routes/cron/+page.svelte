@@ -2,6 +2,7 @@
 	import { onMount } from 'svelte';
 	import { api, type CronOccurrence, type CronWeek } from '$lib/api';
 
+	const MINUTES_PER_DAY = 1440;
 	const hours = Array.from({ length: 24 }, (_, hour) => hour);
 	const dayNames = ['MON', 'TUE', 'WED', 'THU', 'FRI', 'SAT', 'SUN'];
 	let loadToken = 0;
@@ -50,25 +51,40 @@
 
 	function moveWeek(days: number) {
 		weekStart = addDays(weekStart, days);
-		loadWeek();
+		void loadWeek();
 	}
 
 	function today() {
 		weekStart = startOfWeek(new Date());
-		loadWeek();
+		void loadWeek();
 	}
 
 	function daysInWeek() {
 		return week?.days ?? Array.from({ length: 7 }, (_, index) => toDateInput(addDays(weekStart, index)));
 	}
 
+	// Pre-group occurrences by dayKey so each column lookup is O(1) instead of
+	// scanning the full occurrence list for every day in the 7-column render loop.
+	const occurrencesByDay = $derived.by(() => {
+		const map = new Map<string, CronOccurrence[]>();
+		if (!week) return map;
+		for (const occ of week.occurrences) {
+			const list = map.get(occ.dayKey);
+			if (list) {
+				list.push(occ);
+			} else {
+				map.set(occ.dayKey, [occ]);
+			}
+		}
+		return map;
+	});
+
 	function occurrencesForDay(dayKey: string) {
-		if (!week) return [];
-		return week.occurrences.filter((occurrence) => occurrence.dayKey === dayKey);
+		return occurrencesByDay.get(dayKey) ?? [];
 	}
 
 	function occurrenceStyle(occurrence: CronOccurrence) {
-		const top = (occurrence.minutesOfDay / 1440) * 100;
+		const top = (occurrence.minutesOfDay / MINUTES_PER_DAY) * 100;
 		return `top: ${top}%;`;
 	}
 
@@ -141,16 +157,16 @@
 			<p class="text-sm text-text-dim">{weekTitle()}</p>
 		</div>
 		<div class="flex flex-wrap items-center gap-2">
-			<button class="rounded border border-border px-3 py-1.5 text-sm text-text-dim hover:bg-bg-hover" onclick={() => moveWeek(-7)}>
+			<button type="button" class="rounded border border-border px-3 py-1.5 text-sm text-text-dim hover:bg-bg-hover" onclick={() => moveWeek(-7)}>
 				‹
 			</button>
-			<button class="rounded border border-border px-3 py-1.5 text-sm text-text-dim hover:bg-bg-hover" onclick={today}>
+			<button type="button" class="rounded border border-border px-3 py-1.5 text-sm text-text-dim hover:bg-bg-hover" onclick={today}>
 				Today
 			</button>
-			<button class="rounded border border-border px-3 py-1.5 text-sm text-text-dim hover:bg-bg-hover" onclick={() => moveWeek(7)}>
+			<button type="button" class="rounded border border-border px-3 py-1.5 text-sm text-text-dim hover:bg-bg-hover" onclick={() => moveWeek(7)}>
 				›
 			</button>
-			<button class="rounded bg-accent/10 px-3 py-1.5 text-sm text-accent hover:bg-accent/20" onclick={loadWeek}>
+			<button type="button" class="rounded bg-accent/10 px-3 py-1.5 text-sm text-accent hover:bg-accent/20" onclick={loadWeek}>
 				Refresh
 			</button>
 			{#if week}

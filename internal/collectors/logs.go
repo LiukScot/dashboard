@@ -10,6 +10,15 @@ import (
 	"time"
 )
 
+const (
+	// syslogTimestampLen is the character width of the standard syslog timestamp
+	// format "Jan  2 15:04:05" (note the two-char day field).
+	syslogTimestampLen = 15
+	// isoTimestampLen is the character width of the ISO-8601 prefix we accept,
+	// e.g. "2006-01-02T15:04:05" (25 chars including the T separator).
+	isoTimestampLen = 25
+)
+
 type LogEntry struct {
 	Timestamp     string `json:"timestamp"`
 	Unit          string `json:"unit"`
@@ -51,12 +60,12 @@ func (l *LogCollector) GetLogs(unit string, priority int, limit int) ([]LogEntry
 	}
 
 	for _, lf := range logFiles {
-		if unit != "" && !strings.Contains(lf.unitName, unit) {
+		if unit != "" && lf.unitName != unit {
 			continue
 		}
 
 		fullPath := filepath.Join(l.logPath, lf.path)
-		fileEntries, err := readLogFile(fullPath, lf.unitName, priority)
+		fileEntries, err := readLogFile(fullPath, lf.unitName, priority, limit)
 		if err != nil {
 			continue
 		}
@@ -75,14 +84,13 @@ func (l *LogCollector) GetLogs(unit string, priority int, limit int) ([]LogEntry
 	return entries, nil
 }
 
-func readLogFile(path string, unitName string, priorityFilter int) ([]LogEntry, error) {
+func readLogFile(path string, unitName string, priorityFilter int, maxLines int) ([]LogEntry, error) {
 	file, err := os.Open(path)
 	if err != nil {
 		return nil, err
 	}
 	defer file.Close()
 
-	const maxLines = 500
 	ring := make([]string, maxLines)
 	pos, total := 0, 0
 	scanner := bufio.NewScanner(file)
@@ -121,7 +129,7 @@ func readLogFile(path string, unitName string, priorityFilter int) ([]LogEntry, 
 
 // parseSyslogLine parses common syslog format: "Mar 31 14:23:01 hostname process[pid]: message"
 func parseSyslogLine(line string, unitName string) *LogEntry {
-	if len(line) < 16 {
+	if len(line) < syslogTimestampLen+1 {
 		return nil
 	}
 
@@ -131,8 +139,8 @@ func parseSyslogLine(line string, unitName string) *LogEntry {
 	var rest string
 
 	// Standard syslog: "Apr  1 18:30:00 hostname ..."
-	if len(line) >= 15 {
-		tsStr := line[:15]
+	if len(line) >= syslogTimestampLen {
+		tsStr := line[:syslogTimestampLen]
 		t, err := time.Parse("Jan  2 15:04:05", tsStr)
 		if err == nil {
 			now := time.Now()
@@ -144,15 +152,15 @@ func parseSyslogLine(line string, unitName string) *LogEntry {
 				t = t.AddDate(-1, 0, 0)
 			}
 			ts = strconv.FormatInt(t.UnixMicro(), 10)
-			rest = strings.TrimSpace(line[15:])
+			rest = strings.TrimSpace(line[syslogTimestampLen:])
 		}
 	}
 
 	if ts == "" {
 		// Try ISO format
-		if len(line) > 25 && (line[4] == '-' || line[10] == 'T') {
-			ts = line[:25]
-			rest = strings.TrimSpace(line[25:])
+		if len(line) > isoTimestampLen && (line[4] == '-' || line[10] == 'T') {
+			ts = line[:isoTimestampLen]
+			rest = strings.TrimSpace(line[isoTimestampLen:])
 		} else {
 			// Unparseable header — drop the line. Synthesizing time.Now()
 			// as a fallback would surface unparseable old log lines as

@@ -34,10 +34,16 @@
 		}
 	}
 
+	async function loadUser(): Promise<typeof user> {
+		const session = await api.session();
+		// /session is a public endpoint and returns no PII; fetch user details
+		// from the auth-gated /me only once we know the session is valid.
+		return session.authenticated ? await api.me() : null;
+	}
+
 	onMount(async () => {
 		try {
-			const session = await api.session();
-			user = session.authenticated ? (session.user ?? null) : null;
+			user = await loadUser();
 		} catch {
 			user = null;
 		} finally {
@@ -55,6 +61,20 @@
 			await api.logout();
 		} finally {
 			user = null;
+		}
+	}
+
+	async function handleLogin(e: SubmitEvent) {
+		e.preventDefault();
+		loginError = '';
+		const form = e.currentTarget as HTMLFormElement;
+		const data = new FormData(form);
+		try {
+			await api.login(data.get('email') as string, data.get('password') as string);
+			user = await loadUser();
+			loginError = '';
+		} catch (err) {
+			loginError = err instanceof Error ? err.message : 'Sign in failed';
 		}
 	}
 
@@ -93,20 +113,7 @@
 	<div class="h-screen flex items-center justify-center px-4">
 		<form
 			class="bg-bg-card border border-border rounded-xl p-8 w-full max-w-sm"
-			onsubmit={async (e) => {
-				e.preventDefault();
-				loginError = '';
-				const form = e.currentTarget;
-				const data = new FormData(form);
-				try {
-					await api.login(data.get('email') as string, data.get('password') as string);
-					const session = await api.session();
-					user = session.authenticated ? (session.user ?? null) : null;
-					loginError = '';
-				} catch (err) {
-					loginError = err instanceof Error ? err.message : 'Sign in failed';
-				}
-			}}
+			onsubmit={handleLogin}
 		>
 			<h1 class="text-xl font-semibold mb-6 text-center">Dashboard</h1>
 			<label for="login-email" class="sr-only">Email</label>

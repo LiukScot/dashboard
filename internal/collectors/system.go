@@ -36,6 +36,8 @@ type NetworkMetrics struct {
 	TxRate    float64 `json:"txRate"`
 }
 
+const defaultMaxSamples = 120
+
 type SystemCollector struct {
 	procPath    string
 	mu          sync.RWMutex
@@ -56,9 +58,9 @@ type netSample struct {
 func NewSystemCollector(procPath string) *SystemCollector {
 	return &SystemCollector{
 		procPath:   procPath,
-		history:    make([]SystemMetrics, 0, 120),
+		history:    make([]SystemMetrics, 0, defaultMaxSamples),
 		netHistory: make(map[string]netSample),
-		maxSamples: 120,
+		maxSamples: defaultMaxSamples,
 	}
 }
 

@@ -10,11 +10,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
 	"time"
 )
+
+const maxHistoryMessageBytes = 512
+
+// maxHistoryQueryRows bounds the number of history rows returned per week
+// query so a large DB cannot cause unbounded memory allocation.
+const maxHistoryQueryRows = 5000
 
 type CronCollector struct {
 	db      *sql.DB
@@ -154,6 +161,7 @@ func (c *CronCollector) Week(start time.Time) (CronWeek, error) {
 	if warnings == nil {
 		warnings = []string{}
 	}
+	warnings = sanitizeWarnings(warnings)
 	historyByOccurrence := map[string]CronHistoryItem{}
 	for _, item := range history {
 		historyByOccurrence[item.JobID+"\x00"+item.ScheduledAt] = item
@@ -289,15 +297,24 @@ func jobSet(jobs []CronJob) map[string]bool {
 
 func (c *CronCollector) pruneStaleHidden(hidden map[string]bool, current map[string]bool) map[string]bool {
 	active := map[string]bool{}
+	var stale []string
 	for fp := range hidden {
 		if current[fp] {
 			active[fp] = true
-			continue
+		} else {
+			stale = append(stale, fp)
 		}
-		if c.db != nil {
-			if _, err := c.db.Exec(`DELETE FROM cron_hidden_jobs WHERE job_id = ?`, fp); err != nil {
-				log.Printf("prune stale hidden cron job %s: %v", fp, err)
-			}
+	}
+	if c.db != nil && len(stale) > 0 {
+		placeholders := strings.Repeat("?,", len(stale))
+		placeholders = placeholders[:len(placeholders)-1]
+		args := make([]any, len(stale))
+		for i, fp := range stale {
+			args[i] = fp
+		}
+		// placeholders are internal fingerprints, not user input — safe to build dynamically
+		if _, err := c.db.Exec(`DELETE FROM cron_hidden_jobs WHERE job_id IN (`+placeholders+`)`, args...); err != nil {
+			log.Printf("prune stale hidden cron jobs: %v", err)
 		}
 	}
 	return active
@@ -479,8 +496,13 @@ var weekdayNames = map[string]string{
 
 func normalizeNamedField(raw string, mapping map[string]string) string {
 	result := strings.ToLower(raw)
-	for name, value := range mapping {
-		result = strings.ReplaceAll(result, name, value)
+	keys := make([]string, 0, len(mapping))
+	for k := range mapping {
+		keys = append(keys, k)
+	}
+	sort.Strings(keys)
+	for _, name := range keys {
+		result = strings.ReplaceAll(result, name, mapping[name])
 	}
 	return result
 }
@@ -651,8 +673,9 @@ func (c *CronCollector) history(start time.Time, end time.Time) ([]CronHistoryIt
 		`SELECT job_id, scheduled_at, observed_at, status, source, message
 		 FROM cron_run_history
 		 WHERE scheduled_at >= ? AND scheduled_at < ?
-		 ORDER BY scheduled_at ASC`,
-		start.Format(time.RFC3339), end.Format(time.RFC3339),
+		 ORDER BY scheduled_at ASC
+		 LIMIT ?`,
+		start.Format(time.RFC3339), end.Format(time.RFC3339), maxHistoryQueryRows,
 	)
 	if err != nil {
 		return nil, err
@@ -681,9 +704,11 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 		byCommand[key] = job
 	}
 
-	if imported, warnings, usedJournal := c.importJournalHistory(byCommand, start, end); usedJournal {
-		return imported, warnings
+	journalImported, journalWarnings, usedJournal := c.importJournalHistory(byCommand, start, end)
+	if usedJournal {
+		return journalImported, journalWarnings
 	}
+	// journalctl failed or unavailable; fall through to syslog path, preserving any error warnings
 
 	logFiles := []string{
 		filepath.Join(c.logPath, "cron"),
@@ -691,7 +716,7 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 		filepath.Join(c.logPath, "messages"),
 	}
 	imported := 0
-	var warnings []string
+	warnings := append([]string(nil), journalWarnings...)
 
 	tx, err := c.db.Begin()
 	if err != nil {
@@ -712,26 +737,34 @@ func (c *CronCollector) importLogHistory(jobs []CronJob, start time.Time, end ti
 			}
 			continue
 		}
-		scanner := bufio.NewScanner(file)
-		for scanner.Scan() {
-			observedAt, user, command, ok := parseCronLogLine(scanner.Text(), reference)
-			if !ok || observedAt.Before(start) || !observedAt.Before(end) {
-				continue
+		func() {
+			defer func() { _ = file.Close() }()
+			scanner := bufio.NewScanner(file)
+			scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
+			for scanner.Scan() {
+				line := scanner.Text()
+				observedAt, user, command, ok := parseCronLogLine(line, reference)
+				if !ok || observedAt.Before(start) || !observedAt.Before(end) {
+					continue
+				}
+				job, exists := byCommand[historyKey(user, command)]
+				if !exists {
+					continue
+				}
+				msg := line
+				if len(msg) > maxHistoryMessageBytes {
+					msg = msg[:maxHistoryMessageBytes]
+				}
+				if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", filepath.Base(logFile), msg); err != nil {
+					warnings = append(warnings, fmt.Sprintf("insert history %s at %s from %s: %v (line: %q)", job.Fingerprint, observedAt.Format(time.RFC3339), logFile, err, line))
+				} else {
+					imported++
+				}
 			}
-			job, exists := byCommand[historyKey(user, command)]
-			if !exists {
-				continue
+			if err := scanner.Err(); err != nil {
+				warnings = append(warnings, fmt.Sprintf("scan %s: %v", logFile, err))
 			}
-			if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", logFile, scanner.Text()); err != nil {
-				warnings = append(warnings, fmt.Sprintf("insert history %s at %s from %s: %v (line: %q)", job.Fingerprint, observedAt.Format(time.RFC3339), logFile, err, scanner.Text()))
-			} else {
-				imported++
-			}
-		}
-		if err := scanner.Err(); err != nil {
-			warnings = append(warnings, fmt.Sprintf("scan %s: %v", logFile, err))
-		}
-		_ = file.Close()
+		}()
 	}
 
 	if err := tx.Commit(); err != nil {
@@ -783,8 +816,10 @@ func (c *CronCollector) importJournalHistory(byCommand map[string]CronJob, start
 	imported := 0
 	var warnings []string
 	scanner := bufio.NewScanner(strings.NewReader(string(output)))
+	scanner.Buffer(make([]byte, 0, 64*1024), 1024*1024)
 	for scanner.Scan() {
-		observedAt, user, command, ok := parseCronLogLine(scanner.Text(), end.Add(-time.Second))
+		line := scanner.Text()
+		observedAt, user, command, ok := parseCronLogLine(line, end.Add(-time.Second))
 		if !ok || observedAt.Before(start) || !observedAt.Before(end) {
 			continue
 		}
@@ -792,8 +827,12 @@ func (c *CronCollector) importJournalHistory(byCommand map[string]CronJob, start
 		if !exists {
 			continue
 		}
-		if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", "journalctl", scanner.Text()); err != nil {
-			warnings = append(warnings, fmt.Sprintf("insert history %s at %s from journalctl: %v (line: %q)", job.Fingerprint, observedAt.Format(time.RFC3339), err, scanner.Text()))
+		msg := line
+		if len(msg) > maxHistoryMessageBytes {
+			msg = msg[:maxHistoryMessageBytes]
+		}
+		if err := txInsertHistory(tx, job.Fingerprint, observedAt, "observed", "journalctl", msg); err != nil {
+			warnings = append(warnings, fmt.Sprintf("insert history %s at %s from journalctl: %v (line: %q)", job.Fingerprint, observedAt.Format(time.RFC3339), err, line))
 		} else {
 			imported++
 		}
@@ -868,6 +907,39 @@ func txInsertHistory(tx *sql.Tx, jobID string, observedAt time.Time, status stri
 
 func historyKey(user string, command string) string {
 	return strings.TrimSpace(user) + "\x00" + strings.TrimSpace(command)
+}
+
+// rawLogLineSuffix matches the ` (line: "...")` fragment that some warnings
+// append to surface the offending log entry while debugging. That fragment is
+// a verbatim journalctl/syslog line — it can carry usernames, full commands,
+// and free-text message bodies — so it is stripped before the warning leaves
+// the server (AGENTS.md §10: no PII in API output).
+var rawLogLineSuffix = regexp.MustCompile(` \(line: ".*"\)$`)
+
+// absolutePathRe matches POSIX absolute paths so they can be reduced to their
+// basename. Exposing full filesystem layout to the browser leaks host
+// structure (which dirs exist, where spools/configs live).
+var absolutePathRe = regexp.MustCompile(`/[^\s:()"]+`)
+
+// sanitizeWarning strips PII and host-path detail from a single cron warning
+// while keeping the diagnostic shape (what failed, which kind of source).
+func sanitizeWarning(warning string) string {
+	warning = rawLogLineSuffix.ReplaceAllString(warning, "")
+	return absolutePathRe.ReplaceAllStringFunc(warning, func(path string) string {
+		base := filepath.Base(path)
+		if base == "" || base == "." || base == "/" {
+			return path
+		}
+		return base
+	})
+}
+
+func sanitizeWarnings(warnings []string) []string {
+	out := make([]string, len(warnings))
+	for i, w := range warnings {
+		out[i] = sanitizeWarning(w)
+	}
+	return out
 }
 
 func dayKeys(start time.Time, count int) []string {

@@ -72,6 +72,37 @@ describe('api client', () => {
 		await expect(api.session()).rejects.toThrow(/Expected JSON/);
 	});
 
+	it('session returns only the authenticated flag (no user PII)', async () => {
+		const mock = globalThis.fetch as ReturnType<typeof vi.fn>;
+		mock.mockResolvedValueOnce({
+			ok: true,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: async () => ({ authenticated: true })
+		});
+
+		const session = await api.session();
+
+		const [url] = mock.mock.calls[0];
+		expect(url).toBe('/api/v1/auth/session');
+		expect(session).toEqual({ authenticated: true });
+		expect('user' in session).toBe(false);
+	});
+
+	it('me returns the user object from the auth-gated endpoint', async () => {
+		const mock = globalThis.fetch as ReturnType<typeof vi.fn>;
+		mock.mockResolvedValueOnce({
+			ok: true,
+			headers: new Headers({ 'content-type': 'application/json' }),
+			json: async () => ({ id: 1, email: 'alice@example.com' })
+		});
+
+		const user = await api.me();
+
+		const [url] = mock.mock.calls[0];
+		expect(url).toBe('/api/v1/auth/me');
+		expect(user).toEqual({ id: 1, email: 'alice@example.com' });
+	});
+
 	it('systemHistory passes range as query string', async () => {
 		const mock = globalThis.fetch as ReturnType<typeof vi.fn>;
 		mock.mockResolvedValueOnce({

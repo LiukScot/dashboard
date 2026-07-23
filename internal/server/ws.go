@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -14,13 +15,13 @@ import (
 	"github.com/LiukScot/dashboard/internal/config"
 )
 
-func newUpgrader(allowedOrigins string) websocket.Upgrader {
+func newUpgrader(allowedOrigins string, requireHTTPS bool) websocket.Upgrader {
 	allowed := parseAllowedOrigins(allowedOrigins)
 	return websocket.Upgrader{
 		ReadBufferSize:  1024,
 		WriteBufferSize: 1024,
 		CheckOrigin: func(r *http.Request) bool {
-			return requestOriginAllowed(r, allowed)
+			return requestOriginAllowed(r, allowed, requireHTTPS)
 		},
 	}
 }
@@ -98,14 +99,14 @@ func NewWSHandler(hub *Hub, authSvc *auth.Service, sysColl *collectors.SystemCol
 		authSvc:    authSvc,
 		sysColl:    sysColl,
 		dockerColl: dockerColl,
-		upgrader:   newUpgrader(cfg.AllowedOrigins),
+		upgrader:   newUpgrader(cfg.AllowedOrigins, cfg.CookieSecure),
 	}
 }
 
 // wsMaxMessageBytes caps inbound frame size to prevent a single client from
 // asking us to allocate arbitrarily large buffers (gorilla/websocket reads
 // the whole frame before returning).
-const wsMaxMessageBytes = 1 << 16
+const wsMaxMessageBytes = 1 << 16 // 64 KiB
 
 func (ws *WSHandler) HandleUpgrade(w http.ResponseWriter, r *http.Request) {
 	_, err := auth.ValidateSessionFromCookie(ws.authSvc, r)
@@ -142,10 +143,22 @@ type MetricsBroadcast struct {
 	Docker  []collectors.ContainerStats `json:"docker,omitempty"`
 }
 
-func (ws *WSHandler) StartBroadcastLoop(interval time.Duration) {
+// StartBroadcastLoop runs the metrics broadcast goroutine until ctx is
+// cancelled. The returned channel closes once the goroutine has exited and the
+// ticker is stopped, letting a caller wait for a clean shutdown.
+func (ws *WSHandler) StartBroadcastLoop(ctx context.Context, interval time.Duration) <-chan struct{} {
 	ticker := time.NewTicker(interval)
+	done := make(chan struct{})
 	go func() {
-		for range ticker.C {
+		defer close(done)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+			}
+
 			if ws.hub.ClientCount() == 0 {
 				continue
 			}
@@ -171,4 +184,5 @@ func (ws *WSHandler) StartBroadcastLoop(interval time.Duration) {
 			ws.hub.Broadcast(data)
 		}
 	}()
+	return done
 }

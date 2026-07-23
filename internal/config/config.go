@@ -31,7 +31,7 @@ func Load() *Config {
 		DockerSocket:   envOr("DOCKER_SOCKET", "/var/run/docker.sock"),
 		CronPaths:      envList("CRON_PATHS", "/etc/crontab,/etc/cron.d/*,/var/spool/cron/*,/var/spool/cron/crontabs/*,/var/spool/cron/tabs/*"),
 		AllowedOrigins: envOr("ALLOWED_ORIGINS", "http://localhost:4200,http://127.0.0.1:4200,http://localhost:5173,http://127.0.0.1:5173"),
-		CookieSecure:   envOr("COOKIE_SECURE", "false") == "true",
+		CookieSecure:   envOr("COOKIE_SECURE", "true") == "true",
 		SessionTTL:     envInt("SESSION_TTL", 60*60*24*30),
 		PublicDir:       envOr("PUBLIC_DIR", "./frontend/build"),
 		MetricsInterval: envInt("METRICS_INTERVAL", 60),

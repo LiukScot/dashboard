@@ -103,6 +103,8 @@ func buildCSP(scriptHashes []string) string {
 		b.WriteString(h)
 		b.WriteString("'")
 	}
-	b.WriteString("; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' wss:; frame-ancestors 'none'")
+	// ws:/wss: are required alongside 'self' for WebSocket upgrades: the CSP3
+	// spec does not guarantee that 'self' covers wss: when the page is https:.
+	b.WriteString("; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' ws: wss:; frame-ancestors 'none'")
 	return b.String()
 }

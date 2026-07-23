@@ -1,0 +1,8 @@
+data/
+frontend/node_modules/
+frontend/.svelte-kit/
+.env*
+tests/
+playwright-report/
+*.sqlite
+.git/

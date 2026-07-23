@@ -7,6 +7,8 @@ import (
 	"os"
 	"strings"
 
+	"golang.org/x/term"
+
 	"github.com/LiukScot/dashboard/internal/auth"
 	"github.com/LiukScot/dashboard/internal/config"
 	"github.com/LiukScot/dashboard/internal/db"
@@ -35,12 +37,28 @@ func main() {
 	switch os.Args[1] {
 	case "create":
 		fmt.Print("Email: ")
-		email, _ := reader.ReadString('\n')
+		email, err := reader.ReadString('\n')
+		if err != nil {
+			log.Fatalf("failed to read email: %v", err)
+		}
 		email = strings.TrimSpace(email)
 
 		fmt.Print("Password: ")
-		password, _ := reader.ReadString('\n')
-		password = strings.TrimSpace(password)
+		var password string
+		if term.IsTerminal(int(os.Stdin.Fd())) {
+			passwordBytes, err := term.ReadPassword(int(os.Stdin.Fd()))
+			if err != nil {
+				log.Fatalf("failed to read password: %v", err)
+			}
+			fmt.Println()
+			password = strings.TrimSpace(string(passwordBytes))
+		} else {
+			pw, err := reader.ReadString('\n')
+			if err != nil {
+				log.Fatalf("failed to read password: %v", err)
+			}
+			password = strings.TrimSpace(pw)
+		}
 
 		if err := authSvc.CreateUser(email, password); err != nil {
 			log.Fatalf("failed to create user: %v", err)
@@ -64,6 +82,9 @@ func main() {
 				continue
 			}
 			fmt.Printf("%-4d %-30s %s\n", id, email, createdAt)
+		}
+		if err := rows.Err(); err != nil {
+			log.Fatalf("list users: %v", err)
 		}
 
 	default:
