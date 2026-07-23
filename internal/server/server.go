@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -73,7 +75,7 @@ func New(cfg *config.Config, authSvc *auth.Service,
 func (s *Server) routes() {
 	// Auth routes (no middleware)
 	s.mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
-	s.mux.HandleFunc("POST /api/v1/auth/logout", s.handleLogout)
+	s.mux.HandleFunc("POST /api/v1/auth/logout", s.withAuth(s.handleLogout))
 	s.mux.HandleFunc("GET /api/v1/auth/session", s.handleSession)
 	s.mux.HandleFunc("GET /api/v1/auth/me", s.withAuth(s.handleMe))
 
@@ -107,9 +109,35 @@ func (s *Server) routes() {
 	s.mux.HandleFunc("/", s.handleStatic)
 }
 
-func (s *Server) Start() error {
-	// Start WebSocket broadcast
-	s.wsHandler.StartBroadcastLoop(3 * time.Second)
+func (s *Server) Start(ctx context.Context) error {
+	// Cancel on every return path (graceful shutdown OR serve failure) so the
+	// broadcast loop and cleanup goroutine always stop. The cancel must run
+	// before the <-done join, otherwise a serve failure (ctx not yet cancelled
+	// by the caller) would block forever waiting on a loop that never exits.
+	ctx, cancel := context.WithCancel(ctx)
+
+	// Start WebSocket broadcast; ctx cancellation stops the loop and its ticker
+	// on shutdown so neither the goroutine nor the ticker leaks.
+	done := s.wsHandler.StartBroadcastLoop(ctx, 3*time.Second)
+	defer func() {
+		cancel()
+		<-done
+	}()
+
+	go func() {
+		ticker := time.NewTicker(time.Hour)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				if err := s.authSvc.CleanupExpiredSessions(); err != nil {
+					log.Printf("session cleanup: %v", err)
+				}
+			}
+		}
+	}()
 
 	// Initial collection to populate data
 	if _, err := s.sysColl.Collect(); err != nil {
@@ -130,10 +158,68 @@ func (s *Server) Start() error {
 		WriteTimeout:      30 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	return srv.ListenAndServe()
+
+	// ListenAndServe blocks until the server stops, so run it in a goroutine and
+	// select against ctx so a cancelled root context triggers a graceful drain.
+	serveErr := make(chan error, 1)
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			serveErr <- err
+			return
+		}
+		serveErr <- nil
+	}()
+
+	select {
+	case err := <-serveErr:
+		// Server stopped on its own (bind failure or crash) before shutdown.
+		return err
+	case <-ctx.Done():
+		shutdownCtx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+		defer cancel()
+		if err := srv.Shutdown(shutdownCtx); err != nil {
+			return fmt.Errorf("graceful shutdown: %w", err)
+		}
+		return nil
+	}
 }
 
+const shutdownTimeout = 15 * time.Second
+
 const hstsMaxAgeSeconds = 365 * 24 * 3600
+
+// immutableCacheMaxAgeSeconds is the Cache-Control max-age for hashed static
+// assets. Independent from hstsMaxAgeSeconds — changing HSTS duration must not
+// silently alter the asset cache TTL.
+const immutableCacheMaxAgeSeconds = 365 * 24 * 3600
+
+// cronWeekMaxLookbackDays caps the ?start query parameter to prevent a distant
+// past date from triggering a very large journalctl scan.
+const cronWeekMaxLookbackDays = 90
+
+const (
+	defaultBanLimit    = 50
+	defaultLogLimit    = 100
+	maxQueryLimit      = 1000
+	maxUnitFilterBytes = 128
+)
+
+var cronFingerprintRe = regexp.MustCompile(`^[0-9a-f]{16}$`)
+
+func clampedLimit(r *http.Request, defaultVal int) int {
+	l := r.URL.Query().Get("limit")
+	if l == "" {
+		return defaultVal
+	}
+	n, err := strconv.Atoi(l)
+	if err != nil || n <= 0 {
+		return defaultVal
+	}
+	if n > maxQueryLimit {
+		return maxQueryLimit
+	}
+	return n
+}
 
 // securityHeaders sets baseline response headers that harden the SPA + cookie
 // session against clickjacking, MIME sniffing, and XSS.
@@ -161,7 +247,7 @@ func (s *Server) corsMiddleware(next http.Handler) http.Handler {
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		origin := r.Header.Get("Origin")
-		if requestOriginAllowed(r, allowed) {
+		if requestOriginAllowed(r, allowed, s.cfg.CookieSecure) {
 			w.Header().Set("Access-Control-Allow-Origin", origin)
 			w.Header().Set("Access-Control-Allow-Credentials", "true")
 			w.Header().Set("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS")
@@ -211,7 +297,7 @@ func (s *Server) handleLogin(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid body"})
 		return
 	}
-	if len(body.Email) > 254 {
+	if len(body.Email) > auth.MaxEmailBytes {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid credentials"})
 		return
 	}
@@ -256,24 +342,19 @@ func (s *Server) handleLogout(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"status": "ok"})
 }
 
+// handleSession is a public endpoint, so it returns only the boolean auth
+// state — never user PII (id/email). The authenticated client fetches user
+// details from the auth-gated /api/v1/auth/me.
 func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
-	response := map[string]any{"authenticated": false}
+	authenticated := false
 
-	cookie, err := r.Cookie(auth.SessionCookieName)
-	if err != nil {
-		writeJSON(w, http.StatusOK, response)
-		return
+	if cookie, err := r.Cookie(auth.SessionCookieName); err == nil {
+		if _, err := s.authSvc.ValidateSession(cookie.Value); err == nil {
+			authenticated = true
+		}
 	}
 
-	user, err := s.authSvc.ValidateSession(cookie.Value)
-	if err != nil {
-		writeJSON(w, http.StatusOK, response)
-		return
-	}
-
-	response["authenticated"] = true
-	response["user"] = user
-	writeJSON(w, http.StatusOK, response)
+	writeJSON(w, http.StatusOK, map[string]bool{"authenticated": authenticated})
 }
 
 func (s *Server) handleMe(w http.ResponseWriter, r *http.Request) {
@@ -363,15 +444,7 @@ func (s *Server) handleFail2Ban(w http.ResponseWriter, r *http.Request) {
 }
 
 func (s *Server) handleFail2BanBans(w http.ResponseWriter, r *http.Request) {
-	limit := 50
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 {
-			limit = n
-		}
-	}
-	if limit > 1000 {
-		limit = 1000
-	}
+	limit := clampedLimit(r, defaultBanLimit)
 
 	events, err := s.f2bColl.GetRecentBans(limit)
 	if err != nil {
@@ -384,21 +457,21 @@ func (s *Server) handleFail2BanBans(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleLogs(w http.ResponseWriter, r *http.Request) {
 	unit := r.URL.Query().Get("unit")
+	if len(unit) > maxUnitFilterBytes {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "unit filter too long"})
+		return
+	}
 	priority := -1
 	if p := r.URL.Query().Get("priority"); p != "" {
 		if n, err := strconv.Atoi(p); err == nil {
+			if n < 0 || n > 7 {
+				writeJSON(w, http.StatusBadRequest, map[string]string{"error": "priority must be 0-7"})
+				return
+			}
 			priority = n
 		}
 	}
-	limit := 100
-	if l := r.URL.Query().Get("limit"); l != "" {
-		if n, err := strconv.Atoi(l); err == nil && n > 0 {
-			limit = n
-		}
-	}
-	if limit > 1000 {
-		limit = 1000
-	}
+	limit := clampedLimit(r, defaultLogLimit)
 
 	entries, err := s.logColl.GetLogs(unit, priority, limit)
 	if err != nil {
@@ -424,6 +497,10 @@ func (s *Server) handleCronWeek(w http.ResponseWriter, r *http.Request) {
 			writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid start date"})
 			return
 		}
+		earliest := time.Now().AddDate(0, 0, -cronWeekMaxLookbackDays)
+		if parsed.Before(earliest) {
+			parsed = earliest
+		}
 		start = parsed
 	}
 
@@ -444,6 +521,10 @@ func (s *Server) handleHideCronJob(w http.ResponseWriter, r *http.Request) {
 	fingerprint := strings.TrimSpace(r.PathValue("fingerprint"))
 	if fingerprint == "" {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "missing cron job id"})
+		return
+	}
+	if !cronFingerprintRe.MatchString(fingerprint) {
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "invalid cron job id"})
 		return
 	}
 	if err := s.cronColl.HideJob(fingerprint); err != nil {
@@ -517,6 +598,10 @@ func (s *Server) handleStatic(w http.ResponseWriter, r *http.Request) {
 
 	// Try to serve the requested file
 	if info, err := os.Stat(filePath); err == nil && !info.IsDir() {
+		// SvelteKit hashes filenames under /_app/immutable/ — safe to cache forever.
+		if strings.HasPrefix(r.URL.Path, "/_app/immutable/") {
+			w.Header().Set("Cache-Control", fmt.Sprintf("public, max-age=%d, immutable", immutableCacheMaxAgeSeconds))
+		}
 		http.ServeFile(w, r, filePath)
 		return
 	}

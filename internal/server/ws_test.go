@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -174,6 +175,24 @@ func TestHubBroadcastConcurrentWriteSafe(t *testing.T) {
 
 	_ = client.Close()
 	<-drained
+}
+
+func TestStartBroadcastLoopStopsOnContextCancel(t *testing.T) {
+	t.Parallel()
+	// The broadcast goroutine must return (and stop its ticker) promptly
+	// after the context is cancelled, otherwise it leaks past shutdown.
+	ws := &WSHandler{hub: NewHub()}
+
+	ctx, cancel := context.WithCancel(context.Background())
+	done := ws.StartBroadcastLoop(ctx, time.Hour)
+
+	cancel()
+
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("broadcast loop did not return within 1s of context cancellation")
+	}
 }
 
 func TestHandleUpgradeRejectsUnauthenticated(t *testing.T) {

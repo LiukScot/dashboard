@@ -38,14 +38,38 @@
 
 	const fallbackHeight = 250;
 
-	// Colors mirroring CSS design tokens; ECharts config is pure JS so CSS
-	// variables cannot be used directly — keep values in sync with app.css.
-	const THEME = {
-		border:  '#1e1e2e',
+	interface Theme {
+		border: string;
+		textDim: string;
+		text: string;
+		bgCard: string;
+		accent: string;
+	}
+
+	// ECharts config is plain JS and cannot consume CSS variables directly, so
+	// the design tokens are read once at runtime from the :root custom
+	// properties (see app.css @theme). The literals here are only a pre-mount
+	// fallback and stay in sync with app.css by reading the same tokens below.
+	const THEME: Theme = $state({
+		border: '#1e1e2e',
 		textDim: '#8888a0',
-		text:    '#e4e4ef',
-		bgCard:  '#12121a',
-	} as const;
+		text: '#e4e4ef',
+		bgCard: '#12121a',
+		accent: '#00d4aa'
+	});
+
+	function readToken(name: string, fallback: string): string {
+		const value = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+		return value || fallback;
+	}
+
+	function loadTheme(): void {
+		THEME.border = readToken('--color-border', THEME.border);
+		THEME.textDim = readToken('--color-text-dim', THEME.textDim);
+		THEME.text = readToken('--color-text', THEME.text);
+		THEME.bgCard = readToken('--color-bg-card', THEME.bgCard);
+		THEME.accent = readToken('--color-accent', THEME.accent);
+	}
 
 	let { title, labels, series, yAxisLabel = '', height = '250px', zoomable = false }: Props = $props();
 	let container: HTMLDivElement | undefined;
@@ -55,7 +79,7 @@
 	const safeSeries = $derived(series.filter((item) => item.data.length > 0));
 	const maxValue = $derived.by(() => {
 		const values = safeSeries.flatMap((item) => item.data);
-		const highest = values.length > 0 ? Math.max(...values) : 0;
+		const highest = values.length > 0 ? values.reduce((a, b) => (b > a ? b : a), 0) : 0;
 		if (highest <= 0) return 1;
 		return Math.ceil(highest * 1.1 * 10) / 10;
 	});
@@ -67,6 +91,8 @@
 
 	function toRgba(hexColor: string, alpha: number): string {
 		const match = /^#?([\da-f]{2})([\da-f]{2})([\da-f]{2})$/i.exec(hexColor);
+		// Fall back to the (always valid) accent literal rather than recursing
+		// on THEME.accent, which could itself be a malformed CSS value.
 		if (!match) return `rgba(0, 212, 170, ${alpha})`;
 
 		const [, red, green, blue] = match;
@@ -123,17 +149,17 @@
 								bottom: 8,
 								borderColor: THEME.border,
 								backgroundColor: 'transparent',
-								fillerColor: 'rgba(0, 212, 170, 0.15)',
-								handleStyle: { color: '#00d4aa' },
-								moveHandleStyle: { color: '#00d4aa' },
+								fillerColor: toRgba(THEME.accent, 0.15),
+								handleStyle: { color: THEME.accent },
+								moveHandleStyle: { color: THEME.accent },
 								textStyle: { color: THEME.textDim, fontSize: 10 },
 								dataBackground: {
 									lineStyle: { color: THEME.border },
 									areaStyle: { color: THEME.border }
 								},
 								selectedDataBackground: {
-									lineStyle: { color: '#00d4aa' },
-									areaStyle: { color: 'rgba(0, 212, 170, 0.18)' }
+									lineStyle: { color: THEME.accent },
+									areaStyle: { color: toRgba(THEME.accent, 0.18) }
 								}
 							}
 						]
@@ -194,7 +220,7 @@
 					}
 				},
 				series: safeSeries.map((item) => {
-					const color = item.color || '#00d4aa';
+					const color = item.color || THEME.accent;
 					return {
 						name: item.name,
 						type: 'line',
@@ -224,6 +250,7 @@
 	onMount(() => {
 		if (!container) return;
 
+		loadTheme();
 		chart = init(container, undefined, { renderer: 'canvas' });
 		resizeObserver = new ResizeObserver(() => chart?.resize());
 		resizeObserver.observe(container);
@@ -247,7 +274,6 @@
 		zoomable;
 
 		updateChart();
-		chart?.resize();
 	});
 </script>
 

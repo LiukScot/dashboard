@@ -60,6 +60,85 @@ func loginUser(t *testing.T, srv *Server, email, password string) string {
 
 // --- /api/v1/auth/login -----------------------------------------------------
 
+// freePort reserves an ephemeral port and releases it, returning a port that is
+// free at this instant. Good enough for a single-shot start/stop test.
+func freePort(t *testing.T) int {
+	t.Helper()
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	port := l.Addr().(*net.TCPAddr).Port
+	require.NoError(t, l.Close())
+	return port
+}
+
+// TestStartShutsDownOnContextCancel proves the graceful-shutdown wiring: Start
+// blocks while serving, and a cancelled context makes it drain and return nil
+// (not block forever, not error). This is what lets main()'s deferred cleanup
+// run instead of being skipped by an os.Exit.
+func TestStartShutsDownOnContextCancel(t *testing.T) {
+	t.Parallel()
+
+	cfg := &config.Config{Host: "127.0.0.1", Port: freePort(t), SessionTTL: 3600}
+	srv := startTestServer(t, cfg)
+
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(ctx) }()
+
+	// Give the listener a moment to bind, then signal shutdown.
+	time.Sleep(50 * time.Millisecond)
+	cancel()
+
+	select {
+	case err := <-errCh:
+		require.NoError(t, err)
+	case <-time.After(shutdownTimeout + 2*time.Second):
+		t.Fatal("Start did not return after context cancel")
+	}
+}
+
+// startTestServer builds the minimal Server that Start touches.
+func startTestServer(t *testing.T, cfg *config.Config) *Server {
+	t.Helper()
+	hub := NewHub()
+	srv := &Server{
+		cfg:        cfg,
+		authSvc:    auth.NewService(nil, cfg.SessionTTL),
+		sysColl:    collectors.NewSystemCollector(""),
+		dockerColl: collectors.NewDockerCollector(""),
+		mux:        http.NewServeMux(),
+		startedAt:  time.Now(),
+	}
+	srv.wsHandler = NewWSHandler(hub, srv.authSvc, srv.sysColl, srv.dockerColl, cfg)
+	return srv
+}
+
+// TestStartReturnsErrorWhenPortBound proves Start returns the bind error
+// instead of hanging. The broadcast loop only stops on ctx cancel, so Start
+// must cancel its own derived context on the serve-failure path; otherwise the
+// <-done join would deadlock and Start would never return.
+func TestStartReturnsErrorWhenPortBound(t *testing.T) {
+	t.Parallel()
+
+	blocker, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = blocker.Close() })
+	port := blocker.Addr().(*net.TCPAddr).Port
+
+	cfg := &config.Config{Host: "127.0.0.1", Port: port, SessionTTL: 3600}
+	srv := startTestServer(t, cfg)
+
+	errCh := make(chan error, 1)
+	go func() { errCh <- srv.Start(context.Background()) }()
+
+	select {
+	case err := <-errCh:
+		require.Error(t, err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("Start hung on bind failure instead of returning the error")
+	}
+}
+
 func TestHandleLoginRejectsOversizedBody(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, nil, nil)
@@ -197,7 +276,7 @@ func TestHandleSessionReturnsAuthenticatedFalseWithoutCookie(t *testing.T) {
 	assert.False(t, body.Authenticated)
 }
 
-func TestHandleSessionReturnsUserWhenAuthenticated(t *testing.T) {
+func TestHandleSessionAuthenticatedOmitsUserPII(t *testing.T) {
 	t.Parallel()
 	srv := newTestServer(t, nil, nil)
 	sid := loginUser(t, srv, "alice@example.com", "pw")
@@ -208,16 +287,15 @@ func TestHandleSessionReturnsUserWhenAuthenticated(t *testing.T) {
 	srv.handleSession(res, req)
 
 	require.Equal(t, http.StatusOK, res.Code)
-	var body struct {
-		Authenticated bool `json:"authenticated"`
-		User          *struct {
-			Email string `json:"email"`
-		} `json:"user"`
-	}
-	require.NoError(t, json.NewDecoder(res.Body).Decode(&body))
-	assert.True(t, body.Authenticated)
-	require.NotNil(t, body.User)
-	assert.Equal(t, "alice@example.com", body.User.Email)
+
+	// The public session endpoint must not leak user id/email; only the
+	// authenticated boolean is allowed in the body.
+	var raw map[string]any
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&raw))
+	assert.Equal(t, true, raw["authenticated"])
+	_, hasUser := raw["user"]
+	assert.False(t, hasUser, "session response must not include a user object")
+	assert.NotContains(t, res.Body.String(), "alice@example.com")
 }
 
 // --- withAuth ---------------------------------------------------------------
@@ -600,7 +678,7 @@ func TestRequestOriginAllowedAllowsConfiguredOrigin(t *testing.T) {
 	req.Header.Set("Origin", "http://localhost:5173")
 
 	allowed := parseAllowedOrigins("http://localhost:4200,http://localhost:5173")
-	assert.True(t, requestOriginAllowed(req, allowed))
+	assert.True(t, requestOriginAllowed(req, allowed, false))
 }
 
 func TestRequestOriginAllowedAllowsSameHostOrigin(t *testing.T) {
@@ -610,7 +688,7 @@ func TestRequestOriginAllowedAllowsSameHostOrigin(t *testing.T) {
 	req.Header.Set("Origin", "http://100.75.217.127:4200")
 
 	allowed := parseAllowedOrigins("http://localhost:4200,http://127.0.0.1:4200")
-	assert.True(t, requestOriginAllowed(req, allowed))
+	assert.True(t, requestOriginAllowed(req, allowed, false))
 }
 
 func TestRequestOriginAllowedRejectsOtherOrigin(t *testing.T) {
@@ -620,14 +698,14 @@ func TestRequestOriginAllowedRejectsOtherOrigin(t *testing.T) {
 	req.Header.Set("Origin", "http://evil.example")
 
 	allowed := parseAllowedOrigins("http://localhost:4200,http://localhost:5173")
-	assert.False(t, requestOriginAllowed(req, allowed))
+	assert.False(t, requestOriginAllowed(req, allowed, false))
 }
 
 func TestRequestOriginAllowedRejectsEmptyOrigin(t *testing.T) {
 	t.Parallel()
 	req := httptest.NewRequest(http.MethodGet, "/ws", nil)
 	allowed := parseAllowedOrigins("http://localhost:4200")
-	assert.False(t, requestOriginAllowed(req, allowed))
+	assert.False(t, requestOriginAllowed(req, allowed, false))
 }
 
 func TestRequestOriginAllowedRejectsMalformedOrigin(t *testing.T) {
@@ -638,7 +716,7 @@ func TestRequestOriginAllowedRejectsMalformedOrigin(t *testing.T) {
 	req.Header.Set("Origin", "http://\x7f.example")
 
 	allowed := parseAllowedOrigins("http://localhost:4200")
-	assert.False(t, requestOriginAllowed(req, allowed))
+	assert.False(t, requestOriginAllowed(req, allowed, false))
 }
 
 func TestParseAllowedOriginsIgnoresBlanks(t *testing.T) {
@@ -719,4 +797,128 @@ func TestServerEndToEndAuthFlow(t *testing.T) {
 	}
 	require.NoError(t, json.NewDecoder(resp3.Body).Decode(&post))
 	assert.True(t, post.Authenticated)
+}
+
+// --- security handlers: logs + fail2ban bans -------------------------------
+
+func TestHandleLogsRejectsUnitFilterTooLong(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t, nil, nil)
+
+	unit := strings.Repeat("a", maxUnitFilterBytes+1)
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/security/logs?unit="+unit, nil)
+	res := httptest.NewRecorder()
+	srv.handleLogs(res, req)
+
+	assert.Equal(t, http.StatusBadRequest, res.Code)
+}
+
+func TestHandleLogsRejectsPriorityOutOfRange(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t, nil, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/security/logs?priority=9", nil)
+	res := httptest.NewRecorder()
+	srv.handleLogs(res, req)
+
+	assert.Equal(t, http.StatusBadRequest, res.Code)
+}
+
+func TestHandleLogsReturnsEmptyWhenNoLogFiles(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t, nil, func(s *Server) {
+		s.logColl = collectors.NewLogCollector(t.TempDir())
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/security/logs", nil)
+	res := httptest.NewRecorder()
+	srv.handleLogs(res, req)
+
+	assert.Equal(t, http.StatusOK, res.Code)
+	var entries []collectors.LogEntry
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&entries))
+	assert.Empty(t, entries)
+}
+
+func TestHandleFail2BanBansReturnsEmptyWhenNoLogFile(t *testing.T) {
+	t.Parallel()
+	srv := newTestServer(t, nil, func(s *Server) {
+		s.f2bColl = collectors.NewFail2BanCollector(t.TempDir())
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/security/fail2ban/bans", nil)
+	res := httptest.NewRecorder()
+	srv.handleFail2BanBans(res, req)
+
+	assert.Equal(t, http.StatusOK, res.Code)
+	var events []collectors.BanEvent
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&events))
+	assert.Empty(t, events)
+}
+
+func TestHandleSystemHistoryReturnsSamples(t *testing.T) {
+	t.Parallel()
+	dbPath := filepath.Join(t.TempDir(), "dashboard.sqlite")
+	database, err := db.Open(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = database.Close() })
+	require.NoError(t, db.RunMigrations(database))
+
+	_, err = database.Exec(
+		`INSERT INTO metrics_history (timestamp, resolution, cpu_percent, mem_percent, disk_percent, swap_percent, net_rx_rate, net_tx_rate, load_avg_1) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		time.Now().Unix(), "1m", 42.0, 55.0, 30.0, 0.0, 100.0, 50.0, 1.2,
+	)
+	require.NoError(t, err)
+
+	srv := newTestServer(t, nil, func(s *Server) {
+		s.sysHist = collectors.NewSystemHistory(database, nil, time.Minute)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/system/history?range=24h", nil)
+	res := httptest.NewRecorder()
+	srv.handleSystemHistory(res, req)
+
+	assert.Equal(t, http.StatusOK, res.Code)
+	var samples []map[string]any
+	require.NoError(t, json.NewDecoder(res.Body).Decode(&samples))
+	assert.NotEmpty(t, samples)
+}
+
+func TestHandleFail2BanStatusNullWhenUnavailable(t *testing.T) {
+	// Not parallel: modifies process PATH via t.Setenv.
+	t.Setenv("PATH", t.TempDir())
+
+	srv := newTestServer(t, nil, func(s *Server) {
+		s.f2bColl = collectors.NewFail2BanCollector(t.TempDir())
+	})
+
+	req := httptest.NewRequest(http.MethodGet, "/api/v1/security/fail2ban", nil)
+	res := httptest.NewRecorder()
+	srv.handleFail2Ban(res, req)
+
+	assert.Equal(t, http.StatusOK, res.Code)
+	assert.Equal(t, "null\n", res.Body.String())
+}
+
+func TestClampedLimit(t *testing.T) {
+	t.Parallel()
+	const def = 50
+	cases := []struct {
+		name  string
+		query string
+		want  int
+	}{
+		{"absent uses default", "", def},
+		{"non-numeric uses default", "?limit=abc", def},
+		{"zero uses default", "?limit=0", def},
+		{"negative uses default", "?limit=-5", def},
+		{"in range passes through", "?limit=200", 200},
+		{"above max is clamped", "?limit=99999", maxQueryLimit},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			req := httptest.NewRequest(http.MethodGet, "/x"+tc.query, nil)
+			assert.Equal(t, tc.want, clampedLimit(req, def))
+		})
+	}
 }

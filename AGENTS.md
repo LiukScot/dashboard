@@ -1,3 +1,13 @@
+<!-- ─────────────────────────────────────────────────────────────────── -->
+<!--  ✍️ PERSONAL — repo-specific rules. Edit freely; sync never touches this. -->
+<!-- ─────────────────────────────────────────────────────────────────── -->
+
+<!-- @@DOTFILES-SYNC@@ ──────────────────────────────────────────────────────── -->
+<!--  🔒 SYNCED — managed by dotfiles. Do NOT edit below; it gets overwritten. -->
+<!-- ─────────────────────────────────────────────────────────────────── -->
+
+version: 4
+
 # Agent instructions
 
 These rules apply to every code change in this repository.
@@ -56,8 +66,6 @@ before any of the rules below.
 ## 3. Code organization
 
 - Keep files under ~500 lines. Split by concern, not line count.
-- Three similar lines is fine. Abstract on the fourth instance, not
-  the second.
 - No helpers, factories, or wrappers for hypothetical future needs.
   Add them when there are at least three concrete callers.
 
@@ -149,9 +157,6 @@ before any of the rules below.
   redirect is a phishing primitive.
 - File upload: validate MIME, size, and extension server-side.
   Never trust client-reported `Content-Type`.
-- Authentication, authorization, sessions, crypto: do not modify
-  unless the task is explicitly auth/security work. High risk;
-  out-of-scope changes get rejected.
 - CSRF: state-changing endpoints require a CSRF token (or
   `SameSite=Strict` cookie + Origin check) unless documented as
   public.
@@ -198,13 +203,10 @@ before any of the rules below.
 
 - Every workflow has a top-level `permissions:` block. Default to
   `contents: read`. Widen per-job only when needed.
-- All third-party GitHub Actions (anything not under `actions/*` or
-  `github/*`) must be pinned to a full commit SHA with a `# vX.Y.Z`
-  comment. The comment lets Dependabot keep bumping the SHA. SHA
-  pinning prevents a tag from being silently rewritten to a
-  malicious commit by a compromised maintainer account.
-- GitHub-owned actions (`actions/*`, `github/*`): tag (`@v4`) is
-  acceptable; SHA pin preferred for defense-in-depth.
+- Track third-party actions at their latest stable tag (`@v4`).
+  Dependabot bumps the tag when a new major lands; review the
+  changelog and merge. Pin to SHA only when an action's repo has had
+  a tag-moving incident.
 - Never interpolate user-controlled input directly into `run:`
   blocks. Pipe through `env:`:
 
@@ -218,7 +220,7 @@ before any of the rules below.
   shell injection.
 - Do not skip CI hooks (`--no-verify`, `[skip ci]`, `[ci skip]`)
   without an explicit reason in the PR description.
-- Every new test added must run in a CI job, and every new CI job that gates correctness must be added to `main`'s required status checks in the same PR.
+- Every new test added must run in a CI job, and every new CI job that gates correctness must be added to `main`'s required status checks in the same PR 
 
 ## 15. Accessibility (frontend)
 

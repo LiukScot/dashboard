@@ -4,11 +4,13 @@ import (
 	"bufio"
 	"errors"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -51,18 +53,40 @@ func (f *Fail2BanCollector) GetStatus() (*Fail2BanStatus, error) {
 	}
 
 	jailNames := parseJailList(string(out))
-	status := &Fail2BanStatus{}
 
-	for _, name := range jailNames {
+	type result struct {
+		jail *JailStatus
+		err  error
+	}
+	results := make([]result, len(jailNames))
+	var wg sync.WaitGroup
+	for i, name := range jailNames {
 		if !validJailName.MatchString(name) {
 			continue
 		}
-		jail, err := f.getJailStatus(name)
-		if err != nil {
+		wg.Add(1)
+		go func(i int, name string) {
+			defer wg.Done()
+			jail, err := f.getJailStatus(name)
+			results[i] = result{jail: jail, err: err}
+		}(i, name)
+	}
+	wg.Wait()
+
+	status := &Fail2BanStatus{}
+	for i, r := range results {
+		if jailNames[i] == "" || !validJailName.MatchString(jailNames[i]) {
 			continue
 		}
-		status.Jails = append(status.Jails, *jail)
-		status.TotalBans += jail.BanCount
+		if r.err != nil {
+			log.Printf("fail2ban: get jail %q status: %v", jailNames[i], r.err)
+			continue
+		}
+		if r.jail == nil {
+			continue
+		}
+		status.Jails = append(status.Jails, *r.jail)
+		status.TotalBans += r.jail.BanCount
 	}
 	status.TotalJails = len(status.Jails)
 

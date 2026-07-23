@@ -7,11 +7,21 @@ import (
 	"io"
 	"net"
 	"net/http"
-	"sync"
+	"strings"
 	"time"
 )
 
 const dockerAPIVersion = "v1.43"
+
+// dockerShortIDLen is the length of the abbreviated container ID returned by
+// Docker's list endpoint (first 12 hex chars of the full SHA-256 ID).
+const dockerShortIDLen = 12
+
+// trimContainerName strips the leading "/" that Docker prepends to container
+// names in the list and stats endpoints.
+func trimContainerName(name string) string {
+	return strings.TrimPrefix(name, "/")
+}
 
 type Container struct {
 	ID      string            `json:"id"`
@@ -43,21 +53,27 @@ type ContainerStats struct {
 }
 
 type DockerCollector struct {
-	client *http.Client
+	client   *http.Client
+	streamer *StatsStreamer
 }
 
-const maxConcurrentStatsRequests = 4
-
 func NewDockerCollector(socketPath string) *DockerCollector {
+	// The list/one-shot client keeps a request timeout. The streamer needs a
+	// client WITHOUT a timeout: a streaming /stats connection stays open
+	// indefinitely, so a per-request deadline would kill it. Both dial the
+	// same unix socket.
+	dial := func(ctx context.Context, _, _ string) (net.Conn, error) {
+		return net.Dial("unix", socketPath)
+	}
+	streamClient := &http.Client{
+		Transport: &http.Transport{DialContext: dial},
+	}
 	return &DockerCollector{
 		client: &http.Client{
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-					return net.Dial("unix", socketPath)
-				},
-			},
-			Timeout: 10 * time.Second,
+			Transport: &http.Transport{DialContext: dial},
+			Timeout:   10 * time.Second,
 		},
+		streamer: NewStatsStreamer(streamClient),
 	}
 }
 
@@ -100,10 +116,7 @@ func (d *DockerCollector) ListContainers() ([]Container, error) {
 	for i, c := range raw {
 		name := ""
 		if len(c.Names) > 0 {
-			name = c.Names[0]
-			if len(name) > 0 && name[0] == '/' {
-				name = name[1:]
-			}
+			name = trimContainerName(c.Names[0])
 		}
 
 		ports := make([]ContainerPort, len(c.Ports))
@@ -117,8 +130,8 @@ func (d *DockerCollector) ListContainers() ([]Container, error) {
 		}
 
 		id := c.Id
-		if len(id) > 12 {
-			id = id[:12]
+		if len(id) > dockerShortIDLen {
+			id = id[:dockerShortIDLen]
 		}
 
 		containers[i] = Container{
@@ -136,50 +149,46 @@ func (d *DockerCollector) ListContainers() ([]Container, error) {
 	return containers, nil
 }
 
-func (d *DockerCollector) GetContainerStats(containerID string) (*ContainerStats, error) {
-	resp, err := d.client.Get(fmt.Sprintf("http://docker/" + dockerAPIVersion + "/containers/%s/stats?stream=false", containerID))
-	if err != nil {
-		return nil, fmt.Errorf("docker stats %s: %w", containerID, err)
+func isValidContainerID(id string) bool {
+	if len(id) != dockerShortIDLen {
+		return false
 	}
-	defer resp.Body.Close()
+	for _, c := range id {
+		if !('0' <= c && c <= '9' || 'a' <= c && c <= 'f') {
+			return false
+		}
+	}
+	return true
+}
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return nil, fmt.Errorf("read stats body: %w", err)
-	}
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("docker stats %s: unexpected status %d", containerID, resp.StatusCode)
-	}
+// rawContainerStats is the subset of the Docker stats JSON we consume. The
+// streaming reader decodes this shape once per pushed frame.
+type rawContainerStats struct {
+	Name     string `json:"name"`
+	CPUStats struct {
+		CPUUsage struct {
+			TotalUsage uint64 `json:"total_usage"`
+		} `json:"cpu_usage"`
+		SystemCPUUsage uint64 `json:"system_cpu_usage"`
+		OnlineCPUs     int    `json:"online_cpus"`
+	} `json:"cpu_stats"`
+	PreCPUStats struct {
+		CPUUsage struct {
+			TotalUsage uint64 `json:"total_usage"`
+		} `json:"cpu_usage"`
+		SystemCPUUsage uint64 `json:"system_cpu_usage"`
+	} `json:"precpu_stats"`
+	MemoryStats struct {
+		Usage uint64 `json:"usage"`
+		Limit uint64 `json:"limit"`
+	} `json:"memory_stats"`
+	Networks map[string]struct {
+		RxBytes uint64 `json:"rx_bytes"`
+		TxBytes uint64 `json:"tx_bytes"`
+	} `json:"networks"`
+}
 
-	var raw struct {
-		Name     string `json:"name"`
-		CPUStats struct {
-			CPUUsage struct {
-				TotalUsage uint64 `json:"total_usage"`
-			} `json:"cpu_usage"`
-			SystemCPUUsage uint64 `json:"system_cpu_usage"`
-			OnlineCPUs     int    `json:"online_cpus"`
-		} `json:"cpu_stats"`
-		PreCPUStats struct {
-			CPUUsage struct {
-				TotalUsage uint64 `json:"total_usage"`
-			} `json:"cpu_usage"`
-			SystemCPUUsage uint64 `json:"system_cpu_usage"`
-		} `json:"precpu_stats"`
-		MemoryStats struct {
-			Usage uint64 `json:"usage"`
-			Limit uint64 `json:"limit"`
-		} `json:"memory_stats"`
-		Networks map[string]struct {
-			RxBytes uint64 `json:"rx_bytes"`
-			TxBytes uint64 `json:"tx_bytes"`
-		} `json:"networks"`
-	}
-
-	if err := json.Unmarshal(body, &raw); err != nil {
-		return nil, fmt.Errorf("decode stats: %w", err)
-	}
-
+func (raw rawContainerStats) toContainerStats(containerID string) ContainerStats {
 	// Guard uint64 subtraction; counters can drop on container restart or
 	// stats reset, and wrap-around would surface as nonsense CPU%.
 	var cpuDelta, systemDelta float64
@@ -200,17 +209,14 @@ func (d *DockerCollector) GetContainerStats(containerID string) (*ContainerStats
 		netTx += n.TxBytes
 	}
 
-	name := raw.Name
-	if len(name) > 0 && name[0] == '/' {
-		name = name[1:]
-	}
+	name := trimContainerName(raw.Name)
 
 	memPercent := 0.0
 	if raw.MemoryStats.Limit > 0 {
 		memPercent = 100.0 * float64(raw.MemoryStats.Usage) / float64(raw.MemoryStats.Limit)
 	}
 
-	return &ContainerStats{
+	return ContainerStats{
 		ID:         containerID,
 		Name:       name,
 		CPUPercent: cpuPercent,
@@ -219,9 +225,14 @@ func (d *DockerCollector) GetContainerStats(containerID string) (*ContainerStats
 		MemPercent: memPercent,
 		NetRx:      netRx,
 		NetTx:      netTx,
-	}, nil
+	}
 }
 
+// GetAllStats lists running containers and returns their latest stats from the
+// streaming cache. The first call for a freshly seen container opens its stream
+// and may return it without stats until the first frame arrives (~1s); steady
+// state reads are served entirely from memory, with no per-container HTTP call
+// per tick.
 func (d *DockerCollector) GetAllStats() ([]ContainerStats, error) {
 	containers, err := d.ListContainers()
 	if err != nil {
@@ -236,39 +247,10 @@ func (d *DockerCollector) GetAllStats() ([]ContainerStats, error) {
 		running = append(running, c)
 	}
 
-	stats := make([]ContainerStats, len(running))
-	filled := make([]bool, len(running))
-	sem := make(chan struct{}, maxConcurrentStatsRequests)
+	return d.streamer.Snapshot(running), nil
+}
 
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	for i, c := range running {
-		wg.Add(1)
-		go func(i int, c Container) {
-			defer wg.Done()
-
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			s, err := d.GetContainerStats(c.ID)
-			if err != nil {
-				return
-			}
-
-			mu.Lock()
-			stats[i] = *s
-			filled[i] = true
-			mu.Unlock()
-		}(i, c)
-	}
-	wg.Wait()
-
-	result := make([]ContainerStats, 0, len(running))
-	for i, ok := range filled {
-		if ok {
-			result = append(result, stats[i])
-		}
-	}
-
-	return result, nil
+// Close stops all background stats streams. Call on shutdown.
+func (d *DockerCollector) Close() {
+	d.streamer.Close()
 }

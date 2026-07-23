@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/bcrypt"
 
 	"github.com/LiukScot/dashboard/internal/db"
 )
@@ -126,6 +127,77 @@ func TestValidateSessionExpiredReturnsExpiredAndPrunes(t *testing.T) {
 
 	_, err = svc.ValidateSession(sid)
 	assert.ErrorIs(t, err, ErrSessionNotFound, "expired session should be pruned")
+}
+
+func TestCreateUserUsesWorkFactorCost(t *testing.T) {
+	t.Parallel()
+	svc := newTestService(t)
+
+	require.NoError(t, svc.CreateUser("cost@example.com", "pw"))
+
+	var hash string
+	require.NoError(t, svc.db.QueryRow(
+		"SELECT password_hash FROM users WHERE email = ?", "cost@example.com",
+	).Scan(&hash))
+
+	cost, err := bcrypt.Cost([]byte(hash))
+	require.NoError(t, err)
+	assert.Equal(t, bcryptWorkFactor, cost, "new users hashed at current work factor")
+}
+
+func TestLoginUpgradesWeakHashLazily(t *testing.T) {
+	t.Parallel()
+	svc := newTestService(t)
+
+	// Seed a user whose hash uses an outdated, weaker cost (pre-upgrade).
+	weakCost := bcryptWorkFactor - 2
+	weakHash, err := bcrypt.GenerateFromPassword([]byte("correct horse"), weakCost)
+	require.NoError(t, err)
+	_, err = svc.db.Exec(
+		"INSERT INTO users (email, password_hash) VALUES (?, ?)",
+		"legacy@example.com", string(weakHash),
+	)
+	require.NoError(t, err)
+
+	// A successful login must transparently re-hash at the new work factor.
+	_, err = svc.Login("legacy@example.com", "correct horse")
+	require.NoError(t, err)
+
+	var stored string
+	require.NoError(t, svc.db.QueryRow(
+		"SELECT password_hash FROM users WHERE email = ?", "legacy@example.com",
+	).Scan(&stored))
+
+	cost, err := bcrypt.Cost([]byte(stored))
+	require.NoError(t, err)
+	assert.Equal(t, bcryptWorkFactor, cost, "weak hash upgraded on login")
+	assert.NotEqual(t, string(weakHash), stored, "stored hash actually changed")
+
+	// The upgraded hash must still verify the same password.
+	_, err = svc.Login("legacy@example.com", "correct horse")
+	assert.NoError(t, err, "login works after re-hash")
+}
+
+func TestLoginDoesNotRehashCurrentCost(t *testing.T) {
+	t.Parallel()
+	svc := newTestService(t)
+
+	require.NoError(t, svc.CreateUser("stable@example.com", "pw"))
+
+	var before string
+	require.NoError(t, svc.db.QueryRow(
+		"SELECT password_hash FROM users WHERE email = ?", "stable@example.com",
+	).Scan(&before))
+
+	_, err := svc.Login("stable@example.com", "pw")
+	require.NoError(t, err)
+
+	var after string
+	require.NoError(t, svc.db.QueryRow(
+		"SELECT password_hash FROM users WHERE email = ?", "stable@example.com",
+	).Scan(&after))
+
+	assert.Equal(t, before, after, "hash already at work factor is not rewritten")
 }
 
 func TestCreateUserRejectsDuplicateEmail(t *testing.T) {

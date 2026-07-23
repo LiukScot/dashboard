@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Container, ContainerStats } from '$lib/api';
+	import { formatBytes } from '$lib/format';
 
 	interface Props {
 		containers: Container[];
@@ -14,12 +15,8 @@
 		return statsMap.get(name);
 	}
 
-	function formatBytes(bytes: number): string {
-		if (bytes <= 0) return '0 B';
-		const units = ['B', 'KB', 'MB', 'GB', 'TB'];
-		const i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
-		return `${(bytes / Math.pow(1024, i)).toFixed(1)} ${units[i]}`;
-	}
+	const CPU_DANGER_THRESHOLD = 80;
+	const CPU_WARNING_THRESHOLD = 50;
 
 	const stateColors: Record<string, string> = {
 		running: 'bg-success',
@@ -53,7 +50,7 @@
 					<td class="py-2 px-3 text-text-dim text-xs truncate max-w-48">{container.image}</td>
 					<td class="py-2 px-3 text-right font-mono text-xs">
 						{#if s}
-							<span class="{s.cpuPercent > 80 ? 'text-danger' : s.cpuPercent > 50 ? 'text-warning' : 'text-text'}">
+							<span class="{s.cpuPercent > CPU_DANGER_THRESHOLD ? 'text-danger' : s.cpuPercent > CPU_WARNING_THRESHOLD ? 'text-warning' : 'text-text'}">
 								{s.cpuPercent.toFixed(1)}%
 							</span>
 						{:else}

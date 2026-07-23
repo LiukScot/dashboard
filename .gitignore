@@ -38,4 +38,7 @@ frontend/build/
 .DS_Store
 Thumbs.db
 
+# Log files
+*.log
+
 docs/superpowers/

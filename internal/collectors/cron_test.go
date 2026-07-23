@@ -3,6 +3,7 @@ package collectors
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -249,5 +250,46 @@ func TestParseCronLogLineUsesRequestedWeekYear(t *testing.T) {
 	}
 	if observedAt.Year() != 2024 {
 		t.Fatalf("expected prior year inference, got %s", observedAt.Format(time.RFC3339))
+	}
+}
+
+func TestSanitizeWarningStripsRawLogLine(t *testing.T) {
+	t.Parallel()
+
+	in := `insert history ab12 at 2025-01-02T03:04:05Z from journalctl: disk full (line: "Jan  2 03:04:05 host CRON[42]: (luca) CMD (/home/luca/secret.sh)")`
+	got := sanitizeWarning(in)
+
+	if strings.Contains(got, "line:") {
+		t.Fatalf("raw log line fragment not stripped: %q", got)
+	}
+	if strings.Contains(got, "luca") || strings.Contains(got, "secret.sh") {
+		t.Fatalf("PII from log line leaked: %q", got)
+	}
+	if !strings.Contains(got, "disk full") {
+		t.Fatalf("diagnostic detail should be kept: %q", got)
+	}
+}
+
+func TestSanitizeWarningReducesAbsolutePathsToBasename(t *testing.T) {
+	t.Parallel()
+
+	got := sanitizeWarning("read /var/spool/cron/luca: permission denied")
+	if strings.Contains(got, "/var/spool/cron") {
+		t.Fatalf("absolute path not reduced: %q", got)
+	}
+	if !strings.Contains(got, "luca") {
+		t.Fatalf("basename should be retained for diagnostics: %q", got)
+	}
+	if !strings.Contains(got, "permission denied") {
+		t.Fatalf("error detail should be kept: %q", got)
+	}
+}
+
+func TestSanitizeWarningLeavesPlainTextUntouched(t *testing.T) {
+	t.Parallel()
+
+	in := "unsupported cron nickname \"@reboot\""
+	if got := sanitizeWarning(in); got != in {
+		t.Fatalf("plain warning altered: %q -> %q", in, got)
 	}
 }

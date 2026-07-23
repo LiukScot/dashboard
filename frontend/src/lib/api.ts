@@ -47,7 +47,7 @@ export const api = {
 		params.set('limit', String(limit));
 		return request<LogEntry[]>(`/api/v1/security/logs?${params}`);
 	},
-	cronWeek: (start: string) => request<CronWeek>(`/api/v1/cron/week?start=${start}`),
+	cronWeek: (start: string) => request<CronWeek>(`/api/v1/cron/week?start=${encodeURIComponent(start)}`),
 	hideCronJob: (fingerprint: string) =>
 		request<{ status: string }>(`/api/v1/cron/jobs/${encodeURIComponent(fingerprint)}/hide`, {
 			method: 'POST'
@@ -148,7 +148,6 @@ export interface LogEntry {
 
 export interface SessionResponse {
 	authenticated: boolean;
-	user?: { id: number; email: string };
 }
 
 export interface CronWeek {
@@ -156,7 +155,7 @@ export interface CronWeek {
 	end: string;
 	days: string[];
 	timezone: string;
-	historyCoverage: 'none' | 'partial' | 'good';
+	historyCoverage: 'none' | 'partial';
 	hiddenJobCount: number;
 	jobs: CronJob[];
 	occurrences: CronOccurrence[];
