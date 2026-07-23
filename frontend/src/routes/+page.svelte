@@ -11,7 +11,7 @@
 	} from '$lib/api';
 	import { subscribe, type MetricsMessage } from '$lib/ws';
 	import { toastError } from '$lib/stores/toast.svelte';
-	import { formatBytes } from '$lib/format';
+	import { formatBytes, round1dp, BYTES_PER_KB } from '$lib/format';
 	import GaugeRing from '../components/GaugeRing.svelte';
 	import ContainerTable from '../components/ContainerTable.svelte';
 
@@ -72,8 +72,8 @@
 	const metricChartSeries = $derived.by(() => {
 		const m = metrics[selectedMetric];
 		const data = historyLive
-			? liveHistory.map((p) => Math.round(m.live(p) * 10) / 10)
-			: historySamples.map((s) => Math.round(m.hist(s) * 10) / 10);
+			? liveHistory.map((p) => round1dp(m.live(p)))
+			: historySamples.map((s) => round1dp(m.hist(s)));
 		return [{ name: `${m.label} %`, data, color: m.color }];
 	});
 	const netChartLabels = $derived(
@@ -86,24 +86,24 @@
 			? [
 					{
 						name: 'Download',
-						data: netHistory.map((h) => Math.round(h.rx * 10) / 10),
+						data: netHistory.map((h) => round1dp(h.rx)),
 						color: '#4488ff'
 					},
 					{
 						name: 'Upload',
-						data: netHistory.map((h) => Math.round(h.tx * 10) / 10),
+						data: netHistory.map((h) => round1dp(h.tx)),
 						color: '#00d4aa'
 					}
 				]
 			: [
 					{
 						name: 'Download',
-						data: historySamples.map((s) => Math.round((s.netRxRate / 1024) * 10) / 10),
+						data: historySamples.map((s) => round1dp(s.netRxRate / BYTES_PER_KB)),
 						color: '#4488ff'
 					},
 					{
 						name: 'Upload',
-						data: historySamples.map((s) => Math.round((s.netTxRate / 1024) * 10) / 10),
+						data: historySamples.map((s) => round1dp(s.netTxRate / BYTES_PER_KB)),
 						color: '#00d4aa'
 					}
 				]
@@ -173,8 +173,8 @@
 			}));
 			netHistory = netSeed.slice(-netHistoryCap).map((s) => ({
 				time: new Date(s.timestamp * 1000).toLocaleTimeString(),
-				rx: s.netRxRate / 1024,
-				tx: s.netTxRate / 1024
+				rx: s.netRxRate / BYTES_PER_KB,
+				tx: s.netTxRate / BYTES_PER_KB
 			}));
 		} catch (err) {
 			toastError(err, 'Failed to load system overview');
@@ -214,8 +214,8 @@
 					...netHistory.slice(-(netHistoryCap - 1)),
 					{
 						time: new Date().toLocaleTimeString(),
-						rx: total.rx / 1024,
-						tx: total.tx / 1024
+						rx: total.rx / BYTES_PER_KB,
+						tx: total.tx / BYTES_PER_KB
 					}
 				];
 			}
@@ -227,10 +227,14 @@
 		unsubscribeWs?.();
 	});
 
+	const SECONDS_PER_DAY = 86400;
+	const SECONDS_PER_HOUR = 3600;
+	const SECONDS_PER_MINUTE = 60;
+
 	function formatUptime(seconds: number): string {
-		const d = Math.floor(seconds / 86400);
-		const h = Math.floor((seconds % 86400) / 3600);
-		const m = Math.floor((seconds % 3600) / 60);
+		const d = Math.floor(seconds / SECONDS_PER_DAY);
+		const h = Math.floor((seconds % SECONDS_PER_DAY) / SECONDS_PER_HOUR);
+		const m = Math.floor((seconds % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE);
 		if (d > 0) return `${d}d ${h}h ${m}m`;
 		if (h > 0) return `${h}h ${m}m`;
 		return `${m}m`;
