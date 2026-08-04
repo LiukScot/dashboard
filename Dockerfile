@@ -7,7 +7,7 @@ COPY frontend/ ./
 RUN bun run build
 
 # Stage 2: Build Go backend
-FROM golang:1.26.4-bookworm AS backend-build
+FROM golang:1.26.5-bookworm AS backend-build
 RUN apt-get update \
 	&& apt-get install -y --no-install-recommends gcc libc6-dev \
 	&& rm -rf /var/lib/apt/lists/*
